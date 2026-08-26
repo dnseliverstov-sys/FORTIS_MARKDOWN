@@ -57,8 +57,16 @@ chmod +x "FORTIS Markdown Editor-1.0.0.AppImage"
 ```
 
 Если система ругается на FUSE, добавьте `--appimage-extract-and-run`.
-Пакет `.deb`: `sudo apt install ./fortis-markdown-editor_1.0.0_amd64.deb`,
-затем запуск командой `fortis-markdown-editor`.
+Пакеты для установки в систему:
+
+```bash
+sudo apt install ./fortis-markdown-editor_1.0.0_amd64.deb    # Ubuntu, Debian, Mint
+sudo dnf install ./fortis-markdown-editor-1.0.0.x86_64.rpm   # Fedora, RHEL, CentOS
+sudo zypper install ./fortis-markdown-editor-1.0.0.x86_64.rpm # openSUSE
+```
+
+После установки приложение появится в меню программ, запуск из терминала —
+командой `fortis-markdown-editor`.
 
 ## Ветка 2. Запуск из исходников
 

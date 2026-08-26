@@ -105,6 +105,13 @@
           ]
         },
         {
+          "target": "rpm",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        },
+        {
           "target": "tar.gz",
           "arch": [
             "x64"
@@ -118,6 +125,12 @@
     "afterPack": "./scripts/adhoc-sign.js",
     "deb": {
       "priority": "optional"
+    },
+    "rpm": {
+      "fpm": [
+        "--rpm-rpmbuild-define",
+        "_build_id_links none"
+      ]
     }
   },
   "desktopName": "fortis-markdown-editor.desktop"

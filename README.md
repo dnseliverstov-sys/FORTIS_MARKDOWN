@@ -12,7 +12,7 @@
 | --- | --- |
 | macOS | `.dmg` и `.zip` — отдельно для Apple Silicon (`arm64`) и для Intel |
 | Windows | `.exe` — установщик и переносимая версия, 64 бита |
-| Linux | `.AppImage` и `.deb` для x86-64 и arm64, плюс `.tar.gz` |
+| Linux | `.AppImage`, `.deb` и `.rpm` для x86-64 и arm64, плюс `.tar.gz` |
 
 Сборки делает GitHub Actions — вкладка **Actions**, задача «Сборка приложения»;
 она запускается по кнопке или сама на теге `v*`.
@@ -35,8 +35,9 @@
   ```
 
   Если система ругается на отсутствие FUSE, запустите с ключом
-  `--appimage-extract-and-run`. Пакет `.deb` ставится обычным
-  `sudo apt install ./имя-файла.deb`.
+  `--appimage-extract-and-run`. Пакеты ставятся обычным способом:
+  `sudo apt install ./имя-файла.deb` в Ubuntu и Debian,
+  `sudo dnf install ./имя-файла.rpm` в Fedora, RHEL и openSUSE.
 
 Если работу будет делать ИИ-агент, дайте ему один из двух файлов:
 [СБОРКА.md](СБОРКА.md) — чтобы собрал пакет из исходников, или
@@ -65,7 +66,7 @@ npm start
 ```bash
 npm run dist:mac    # .dmg и .zip
 npm run dist:win    # .exe (установщик и переносимый)
-npm run dist:linux  # .AppImage
+npm run dist:linux  # .AppImage, .deb, .rpm
 ```
 
 Результат — в папке `dist/`. Каждую систему надо собирать на ней самой: кросс-сборка
