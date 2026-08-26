@@ -1,0 +1,124 @@
+{
+  "name": "fortis-markdown-editor",
+  "productName": "FORTIS Markdown Editor",
+  "version": "1.0.0",
+  "description": "Настольный markdown-редактор FORTIS: работа с папкой, вкладки, WYSIWYG и разметка, экспорт и импорт",
+  "homepage": "https://github.com/GITHUB_ACCOUNT/fortis-markdown-editor",
+  "author": {
+    "name": "Дмитрий Селиверстов",
+    "email": "GITHUB_ACCOUNT@users.noreply.github.com"
+  },
+  "main": "app/main.js",
+  "private": true,
+  "license": "UNLICENSED",
+  "scripts": {
+    "start": "electron .",
+    "icon": "python3 scripts/make-icon.py",
+    "dist": "electron-builder",
+    "dist:mac": "electron-builder --mac",
+    "dist:win": "electron-builder --win",
+    "dist:linux": "electron-builder --linux",
+    "account": "node scripts/set-account.js"
+  },
+  "devDependencies": {
+    "electron": "^44.0.0",
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "appId": "ru.fortis.markdown-editor",
+    "productName": "FORTIS Markdown Editor",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "app/**/*",
+      "build/icon.png",
+      "!**/.DS_Store"
+    ],
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        }
+      ],
+      "category": "public.app-category.productivity",
+      "darkModeSupport": true,
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false,
+      "notarize": false
+    },
+    "dmg": {
+      "title": "FORTIS Markdown Editor"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "installerLanguages": [
+        "ru_RU",
+        "en_US"
+      ],
+      "shortcutName": "FORTIS Markdown Editor"
+    },
+    "linux": {
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        },
+        {
+          "target": "deb",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        },
+        {
+          "target": "tar.gz",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "category": "Office",
+      "synopsis": "Настольный markdown-редактор FORTIS",
+      "syncDesktopName": true
+    },
+    "afterPack": "./scripts/adhoc-sign.js",
+    "deb": {
+      "priority": "optional"
+    }
+  },
+  "desktopName": "fortis-markdown-editor.desktop"
+}
