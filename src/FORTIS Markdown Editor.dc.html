@@ -1084,7 +1084,7 @@ class Component extends DCLogic {
   parse(md) {
     const lines = String(md == null ? '' : md).replace(/\r\n/g, '\n').split('\n');
     const out = []; const toc = []; const links = [];
-    const isBlockStart = (l) => /^(#{1,6}\s|```|>|\s*([-*+]|\d+\.)\s|\||---\s*$|\*\*\*\s*$)/.test(l);
+    const isBlockStart = (l) => /^(#{1,6}\s|```|>|\s*([-*+]|\d+\.)\s|\||---\s*$|\*\*\*\s*$|<table[\s>])/i.test(l);
     let i = 0;
     while (i < lines.length) {
       const l = lines[i];
@@ -1132,13 +1132,36 @@ class Component extends DCLogic {
         else out.push('<blockquote>' + body + '</blockquote>');
         continue;
       }
+      // Таблица с объединёнными ячейками хранится как HTML — пропускаем её
+      // в документ как есть.
+      if (/^<table[\s>]/i.test(l)) {
+        const buf = [];
+        while (i < lines.length) {
+          buf.push(lines[i]);
+          const last = /<\/table>/i.test(lines[i]);
+          i++;
+          if (last) break;
+        }
+        out.push(buf.join('\n'));
+        continue;
+      }
       if (/^\|/.test(l) && lines[i + 1] && /^\|[\s:|-]+$/.test(lines[i + 1])) {
-        const cells = (r) => r.replace(/^\|/, '').replace(/\|\s*$/, '').split('|').map((c) => c.trim());
-        const head = cells(l); i += 2;
+        // Делим только по неэкранированным чертам: '\|' — символ внутри ячейки,
+        // а не граница столбца. Без этого таблица разъезжалась на лишний столбец.
+        const cells = (r) => r.replace(/^\|/, '').replace(/\|\s*$/, '')
+          .split(/(?<!\\)\|/).map((c) => c.trim().replace(/\\\|/g, '|'));
+        const head = cells(l);
+        // Двоеточия в строке-разделителе задают выравнивание столбца.
+        const aligns = cells(lines[i + 1]).map((c) => {
+          const lf = c.charAt(0) === ':'; const rt = c.charAt(c.length - 1) === ':';
+          return lf && rt ? 'center' : rt ? 'right' : lf ? 'left' : '';
+        });
+        const al = (n) => (aligns[n] ? ' style="text-align:' + aligns[n] + '"' : '');
+        i += 2;
         const body = [];
         while (i < lines.length && /^\|/.test(lines[i])) { body.push(cells(lines[i])); i++; }
-        let h = '<table><thead><tr>' + head.map((c) => '<th>' + this.inline(c) + '</th>').join('') + '</tr></thead><tbody>';
-        body.forEach((r) => { h += '<tr>' + r.map((c) => '<td>' + this.inline(c) + '</td>').join('') + '</tr>'; });
+        let h = '<table><thead><tr>' + head.map((c, n) => '<th' + al(n) + '>' + this.inline(c) + '</th>').join('') + '</tr></thead><tbody>';
+        body.forEach((r) => { h += '<tr>' + r.map((c, n) => '<td' + al(n) + '>' + this.inline(c) + '</td>').join('') + '</tr>'; });
         out.push(h + '</tbody></table>');
         continue;
       }
@@ -1149,7 +1172,9 @@ class Component extends DCLogic {
           let txt = mm[3]; let task = null;
           const tk = txt.match(/^\[([ xX])\]\s+(.*)$/);
           if (tk) { task = tk[1].toLowerCase() === 'x'; txt = tk[2]; }
-          items.push({ indent: Math.floor(mm[1].replace(/\t/g, '  ').length / 2), ordered: /\d/.test(mm[2]), task: task, text: txt });
+          const ord = /\d/.test(mm[2]);
+          items.push({ indent: Math.floor(mm[1].replace(/\t/g, '  ').length / 2), ordered: ord,
+            num: ord ? parseInt(mm[2], 10) : null, task: task, text: txt });
           i++;
         }
         out.push(this.renderList(items, 0, 0)[0]);
@@ -1172,7 +1197,10 @@ class Component extends DCLogic {
 
   renderList(items, start, indent) {
     const ordered = items[start].ordered;
-    let h = ordered ? '<ol>' : '<ul>';
+    // Список может начинаться не с единицы — сохраняем номер, иначе нумерация
+    // молча сбрасывалась на 1 при каждом сохранении.
+    const from = items[start].num;
+    let h = ordered ? '<ol' + (from > 1 ? ' start="' + from + '"' : '') + '>' : '<ul>';
     let i = start;
     while (i < items.length && items[i].indent >= indent) {
       const it = items[i];
@@ -1247,7 +1275,7 @@ class Component extends DCLogic {
     const ol = list.tagName === 'OL';
     const pad = '  '.repeat(depth);
     const rows = [];
-    let n = 1;
+    let n = ol ? (parseInt(list.getAttribute('start'), 10) || 1) : 1;
     Array.from(list.children).forEach((li) => {
       if (li.tagName !== 'LI') return;
       const cb = Array.from(li.children).find((c) => c.tagName === 'INPUT' && c.type === 'checkbox');
@@ -1266,11 +1294,42 @@ class Component extends DCLogic {
   tableMd(t) {
     const rows = Array.from(t.querySelectorAll('tr'));
     if (!rows.length) return '';
+    // Объединённые ячейки разметкой таблиц выразить нечем: в ней нет ни
+    // colspan, ни rowspan. Такую таблицу сохраняем как HTML, обычные
+    // остаются обычными.
+    if (Array.from(t.querySelectorAll('td,th')).some((c) => (c.colSpan || 1) > 1 || (c.rowSpan || 1) > 1)) {
+      return this.tableHtmlMd(t);
+    }
     const cells = (tr) => Array.from(tr.children).map((c) => this.inlMd(c).trim().replace(/\|/g, '\\|'));
     const head = cells(rows[0]);
-    const out = ['| ' + head.join(' | ') + ' |', '| ' + head.map(() => '---').join(' | ') + ' |'];
+    // Выравнивание живёт в стиле ячеек шапки — возвращаем его двоеточиями.
+    const aligns = Array.from(rows[0].children).map((c) => (c.style && c.style.textAlign) || '');
+    const sep = head.map((x, n) => (aligns[n] === 'center' ? ':---:'
+      : aligns[n] === 'right' ? '---:' : aligns[n] === 'left' ? ':---' : '---'));
+    const out = ['| ' + head.join(' | ') + ' |', '| ' + sep.join(' | ') + ' |'];
     rows.slice(1).forEach((tr) => { out.push('| ' + cells(tr).join(' | ') + ' |'); });
     return out.join('\n');
+  }
+
+  tableHtmlMd(t) {
+    const cell = (c) => {
+      const tag = c.tagName.toLowerCase();
+      let at = '';
+      if ((c.colSpan || 1) > 1) at += ' colspan="' + c.colSpan + '"';
+      if ((c.rowSpan || 1) > 1) at += ' rowspan="' + c.rowSpan + '"';
+      const a = c.style && c.style.textAlign;
+      if (a) at += ' align="' + a + '"';
+      return '<' + tag + at + '>' + c.innerHTML.replace(/&nbsp;/g, ' ').trim() + '</' + tag + '>';
+    };
+    const part = (host) => Array.from(host.children)
+      .filter((tr) => tr.tagName === 'TR')
+      .map((tr) => '<tr>' + Array.from(tr.children).map(cell).join('') + '</tr>').join('\n');
+    const th = t.querySelector('thead'); const tb = t.querySelector('tbody');
+    let h = '<table>';
+    if (th) h += '\n<thead>\n' + part(th) + '\n</thead>';
+    if (tb) h += '\n<tbody>\n' + part(tb) + '\n</tbody>';
+    if (!th && !tb) h += '\n' + part(t);
+    return h + '\n</table>';
   }
 
   inlMd(el) {
@@ -1544,6 +1603,9 @@ class Component extends DCLogic {
     }
     if (op === 'delCol') {
       if (tr.children.length > 1) Array.from(table.querySelectorAll('tr')).forEach((row) => { if (row.children[idx]) row.children[idx].remove(); });
+    }
+    if (op === 'mergeRight' || op === 'mergeDown' || op === 'splitCell') {
+      this.mergeOp(op, td, table);
     }
     if (op === 'delTable') table.remove();
     this.onDomInput();
@@ -2333,6 +2395,87 @@ class Component extends DCLogic {
     return (e.ctrlKey || e.metaKey ? 'Ctrl+' : '') + (e.shiftKey ? 'Shift+' : '') + (e.altKey ? 'Alt+' : '') + k;
   }
 
+  /* ---------- объединение ячеек ---------- */
+
+  // Раскладка таблицы с учётом уже объединённых ячеек: grid[строка][столбец]
+  // указывает на ячейку, которая это место занимает. Без такой раскладки
+  // «соседняя справа» считается неверно, как только рядом есть объединение.
+  tableGrid(table) {
+    const rows = Array.from(table.querySelectorAll('tr'));
+    const grid = [];
+    rows.forEach((tr, r) => {
+      grid[r] = grid[r] || [];
+      let c = 0;
+      Array.from(tr.children).forEach((cell) => {
+        while (grid[r][c]) c++;
+        const cs = cell.colSpan || 1; const rs = cell.rowSpan || 1;
+        for (let i = 0; i < rs; i++) {
+          grid[r + i] = grid[r + i] || [];
+          for (let j = 0; j < cs; j++) grid[r + i][c + j] = cell;
+        }
+        c += cs;
+      });
+    });
+    return { rows: rows, grid: grid };
+  }
+
+  cellAt(grid, cell) {
+    for (let r = 0; r < grid.length; r++) {
+      for (let c = 0; grid[r] && c < grid[r].length; c++) {
+        if (grid[r][c] === cell) return { r: r, c: c };
+      }
+    }
+    return null;
+  }
+
+  mergeOp(op, td, table) {
+    const g = this.tableGrid(table);
+    const at = this.cellAt(g.grid, td);
+    if (!at) return;
+    const cs = td.colSpan || 1; const rs = td.rowSpan || 1;
+
+    if (op === 'splitCell') {
+      if (cs === 1 && rs === 1) { this.toast('Ячейка не объединена.'); return; }
+      td.colSpan = 1; td.rowSpan = 1;
+      const tag = td.tagName.toLowerCase();
+      for (let i = 0; i < rs; i++) {
+        const row = g.rows[at.r + i];
+        if (!row) continue;
+        // Вставляем перед первой ячейкой этой строки, которая стоит правее.
+        let ref = null;
+        for (let c = at.c + (i === 0 ? cs : 0); c < (g.grid[at.r + i] || []).length; c++) {
+          const n = g.grid[at.r + i][c];
+          if (n && n !== td && n.parentElement === row) { ref = n; break; }
+        }
+        const need = i === 0 ? cs - 1 : cs;
+        for (let k = 0; k < need; k++) {
+          const c = document.createElement(tag);
+          c.innerHTML = '&nbsp;';
+          row.insertBefore(c, ref);
+        }
+      }
+      this.onDomInput();
+      return;
+    }
+
+    const right = op === 'mergeRight';
+    const other = right ? (g.grid[at.r] || [])[at.c + cs] : (g.grid[at.r + rs] || [])[at.c];
+    if (!other || other === td) { this.toast(right ? 'Справа нет ячейки.' : 'Ниже нет ячейки.'); return; }
+    // Объединяем только ровные пары: иначе таблица теряет прямоугольность.
+    if (right && (other.rowSpan || 1) !== rs) { this.toast('Соседняя ячейка другой высоты.'); return; }
+    if (!right && (other.colSpan || 1) !== cs) { this.toast('Ячейка ниже другой ширины.'); return; }
+    if (other.parentElement.parentElement !== td.parentElement.parentElement) {
+      this.toast('Шапку и тело таблицы объединять нельзя.'); return;
+    }
+
+    const add = (other.textContent || '').trim();
+    if (add) td.innerHTML = (td.innerHTML.replace(/&nbsp;/g, '').trim() ? td.innerHTML + ' ' : '') + other.innerHTML;
+    if (right) td.colSpan = cs + (other.colSpan || 1);
+    else td.rowSpan = rs + (other.rowSpan || 1);
+    other.remove();
+    this.onDomInput();
+  }
+
   /* ---------- хранилище дескрипторов ---------- */
 
   idb() {
@@ -2938,6 +3081,9 @@ class Component extends DCLogic {
         { key: 'rowBelow', label: 'Строка ниже', icon: 'ph ph-rows-plus-bottom', run: () => this.tableOp('rowBelow') },
         { key: 'colLeft', label: 'Столбец слева', icon: 'ph ph-columns-plus-left', run: () => this.tableOp('colLeft') },
         { key: 'colRight', label: 'Столбец справа', icon: 'ph ph-columns-plus-right', run: () => this.tableOp('colRight') },
+        { key: 'mergeRight', label: 'Объединить с правой', icon: 'ph ph-arrows-in-line-horizontal', run: () => this.tableOp('mergeRight') },
+        { key: 'mergeDown', label: 'Объединить с нижней', icon: 'ph ph-arrows-in-line-vertical', run: () => this.tableOp('mergeDown') },
+        { key: 'splitCell', label: 'Разъединить ячейку', icon: 'ph ph-arrows-out-line-horizontal', run: () => this.tableOp('splitCell') },
         { key: 'delRow', label: 'Удалить строку', icon: 'ph ph-minus', run: () => this.tableOp('delRow') },
         { key: 'delCol', label: 'Удалить столбец', icon: 'ph ph-minus', run: () => this.tableOp('delCol') },
         { key: 'delTable', label: 'Удалить таблицу', icon: 'ph ph-trash', run: () => this.tableOp('delTable') }
