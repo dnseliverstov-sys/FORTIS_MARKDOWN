@@ -1722,7 +1722,10 @@ class Component extends DCLogic {
   setZoom(d) {
     this.zoom = d === 0 ? 1 : Math.min(1.8, Math.max(0.7, this.zoom + d));
     const el = this.zoomRef.current;
-    if (el) el.style.fontSize = (this.zoom * 100) + '%';
+    // Раньше здесь менялся fontSize контейнера, но документ задаёт размеры
+    // в пикселях, и наследование их не трогает — кнопки визуально не делали
+    // ничего. Свойство zoom масштабирует всё сразу: текст, отступы, таблицы.
+    if (el) el.style.zoom = this.zoom;
   }
 
   replaceAll = () => {
@@ -1773,7 +1776,7 @@ class Component extends DCLogic {
     const startX = e.clientX;
     const from = kind === 'tree' ? this.state.treeW : (kind === 'doc' ? this.state.docW : this.state.splitA);
     const box = this.zoomRef.current;
-    const boxW = box ? box.clientWidth : 900;
+    const boxW = (box ? box.clientWidth : 900) * (this.zoom || 1);
     const root = document.documentElement.style;
     document.body.style.cursor = 'col-resize';
     document.body.style.userSelect = 'none';
@@ -2456,14 +2459,16 @@ class Component extends DCLogic {
     if (!target) return;
 
     e.preventDefault();
+    // Координаты мыши приходят с учётом масштаба, а ширина задаётся без него.
+    const z = this.zoom || 1;
     // Закрепляем текущие ширины: иначе соседние столбцы поедут вслед за этим.
     Array.from(head.children).forEach((c) => {
-      if (!c.style.width) c.style.width = Math.round(c.getBoundingClientRect().width) + 'px';
+      if (!c.style.width) c.style.width = Math.round(c.getBoundingClientRect().width / z) + 'px';
     });
 
     const x0 = e.clientX;
-    const w0 = target.getBoundingClientRect().width;
-    const move = (ev) => { target.style.width = Math.max(48, Math.round(w0 + ev.clientX - x0)) + 'px'; };
+    const w0 = target.getBoundingClientRect().width / z;
+    const move = (ev) => { target.style.width = Math.max(48, Math.round(w0 + (ev.clientX - x0) / z)) + 'px'; };
     const up = () => {
       document.removeEventListener('mousemove', move);
       document.removeEventListener('mouseup', up);
