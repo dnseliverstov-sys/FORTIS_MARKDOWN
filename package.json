@@ -8,8 +8,12 @@
   "main": "app/main.js",
   "private": true,
   "license": "UNLICENSED",
+  "engines": {
+    "node": ">=22.12.0"
+  },
   "scripts": {
-    "start": "electron .",
+    "start": "node scripts/start.js",
+    "test:launcher": "node --test scripts/start.test.js",
     "icon": "python3 scripts/make-icon.py",
     "dist": "electron-builder",
     "dist:mac": "electron-builder --mac",
