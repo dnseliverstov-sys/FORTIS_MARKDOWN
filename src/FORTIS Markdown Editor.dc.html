@@ -1434,6 +1434,24 @@ class Component extends DCLogic {
     this.saveAs();
   }
 
+  // Спрашивает и вызывает оболочка приложения, когда закрывают окно.
+  // Ctrl+S сохраняет только текущую вкладку, а закрытие держат все сразу.
+  async saveAllDirty() {
+    const settle = () => new Promise((r) => setTimeout(r, 120));
+    const ids = this.state.tabs.filter((t) => t.dirty).map((t) => t.id);
+    for (let i = 0; i < ids.length; i++) {
+      this.setState({ active: ids[i] });
+      await settle();
+      await this.save();
+      // Признак снимается через setState, поэтому смотрим не сразу.
+      await settle();
+      // Пользователь закрыл окно выбора файла — дальше не идём, пусть решит сам.
+      if (this.state.tabs.some((t) => t.id === ids[i] && t.dirty)) break;
+    }
+    await settle();
+    return this.state.tabs.some((t) => t.dirty);
+  }
+
   async saveAs() {
     const t = this.tab(); if (!t) return;
     if (window.showSaveFilePicker) {
@@ -2821,6 +2839,10 @@ class Component extends DCLogic {
     };
     window.addEventListener('keydown', this.onKey);
     window.addEventListener('beforeunload', this.onBeforeUnload);
+    // Настольная оболочка спрашивает это при закрытии окна: сам по себе
+    // beforeunload в Electron лишь молча отменяет закрытие, без вопроса.
+    window.__fortisUnsaved = () => this.state.tabs.some((t) => t.dirty);
+    window.__fortisSaveAll = () => this.saveAllDirty();
     document.addEventListener('mousedown', this.onDocDown);
     document.addEventListener('selectionchange', this.onSel);
     window.addEventListener('dragover', (e) => e.preventDefault());
@@ -2834,6 +2856,7 @@ class Component extends DCLogic {
   componentWillUnmount() {
     window.removeEventListener('keydown', this.onKey);
     window.removeEventListener('beforeunload', this.onBeforeUnload);
+    delete window.__fortisUnsaved; delete window.__fortisSaveAll;
     document.removeEventListener('mousedown', this.onDocDown);
     document.removeEventListener('selectionchange', this.onSel);
     clearInterval(this._poll); clearInterval(this._as); clearInterval(this._snap);

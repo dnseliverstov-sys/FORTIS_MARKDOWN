@@ -212,6 +212,54 @@ function buildMenu() {
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
+/* ---------- закрытие окна ---------- */
+
+// Страница держит закрытие, пока есть несохранённые изменения. В браузере на
+// это показывают вопрос «уйти со страницы?», а Electron такой запрос молча
+// отменяет: красная кнопка просто перестаёт отвечать, и никто не понимает,
+// почему. Поэтому вопрос задаём сами.
+
+async function ask(win, code) {
+  try {
+    // userGesture: без него редактор не сможет открыть окно выбора файла.
+    return await win.webContents.executeJavaScript(code, true);
+  } catch {
+    return null;
+  }
+}
+
+const UNSAVED = `(() => {
+  if (typeof window.__fortisUnsaved === 'function') return window.__fortisUnsaved();
+  const e = new Event('beforeunload', { cancelable: true });
+  window.dispatchEvent(e);
+  return e.defaultPrevented;
+})()`;
+
+async function confirmClose(win, close) {
+  writeWindowState(win);
+  if (!(await ask(win, UNSAVED))) { close(); return; }
+
+  const { response } = await dialog.showMessageBox(win, {
+    type: 'warning',
+    buttons: ['Сохранить', 'Не сохранять', 'Отмена'],
+    defaultId: 0,
+    cancelId: 2,
+    message: 'Есть несохранённые изменения',
+    detail: 'Сохранить их перед закрытием?'
+  });
+  if (response === 2) return;              // отмена — окно остаётся открытым
+  if (response === 1) { close(); return; } // закрыть, ничего не сохраняя
+
+  const stillDirty = await ask(win, 'window.__fortisSaveAll ? window.__fortisSaveAll() : true');
+  if (win.isDestroyed()) return;
+  if (stillDirty) {
+    // Сохранение не довели до конца — окно оставляем открытым, иначе текст
+    // пропадёт. Пользователь сохранит вручную и закроет ещё раз.
+    return;
+  }
+  close();
+}
+
 /* ---------- окно ---------- */
 
 function createWindow() {
@@ -251,9 +299,12 @@ function createWindow() {
   };
   win.on('resize', remember);
   win.on('move', remember);
-  win.on('close', () => {
+  let closing = false;
+  win.on('close', (e) => {
     clearTimeout(saveTimer);
-    writeWindowState(win);
+    if (closing) return;
+    e.preventDefault();
+    confirmClose(win, () => { closing = true; win.destroy(); });
   });
 
   // Работа с файлами и папками идёт через File System Access API — разрешаем
@@ -299,7 +350,8 @@ if (!app.requestSingleInstanceLock()) {
     });
   });
 
-  app.on('window-all-closed', () => {
-    if (process.platform !== 'darwin') app.quit();
-  });
+  // Закрыли окно — закрыли приложение. На macOS принято оставлять программу
+  // в доке без окон, но редактор однооконный, и вернуть окно оттуда нечем,
+  // кроме значка в доке: «нажал закрыть, а оно висит» читается как поломка.
+  app.on('window-all-closed', () => app.quit());
 }
