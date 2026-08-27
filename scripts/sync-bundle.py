@@ -10,13 +10,22 @@
   python3 scripts/sync-bundle.py           перенести src/ → app/index.html
   python3 scripts/sync-bundle.py --check   проверить, что они не разошлись
 
-Переносятся единственный инлайновый <script> (вся логика редактора) и
-последние N блоков <style> — те, что пришли из исходника; идущие перед ними
-блоки генератор добавил сам, там встроенные шрифты, их трогать нельзя.
+Переносятся три части: единственный инлайновый <script> (вся логика
+редактора), последние N блоков <style> (идущие перед ними генератор добавил
+сам — там встроенные шрифты, их трогать нельзя) и разметка интерфейса —
+всё, что между </helmet> и </x-dc>.
+
+Разметку генератор слегка переписывает: camelCase-атрибуты становятся
+sc-camel-*, <select> становится <sc-raw-select>, а служебный блок
+__bundler_thumbnail выбрасывается. Те же преобразования делает markup().
+Перед заменой скрипт проверяет их на закоммиченной версии исходника: если
+результат не сойдётся со сборкой побайтово, перенос отменяется — значит
+генератор делает что-то ещё, и молча портить сборку нельзя.
 """
 import json
 import pathlib
 import re
+import subprocess
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -44,6 +53,31 @@ def encode(text):
     assert '</' not in out, 'в закодированном шаблоне осталась последовательность </'
     assert json.loads(out) == text, 'после кодирования шаблон читается иначе'
     return out
+
+
+MARKUP_RE = re.compile(r'(?<=</helmet>)(.*)(?=</x-dc>)', re.S)
+
+
+def markup(text):
+    """Приводит разметку исходника к тому виду, в каком её хранит сборка."""
+    text = re.sub(r'<template id="__bundler_thumbnail">.*?</template>', '', text, flags=re.S)
+    text = re.sub(
+        r'(\s)([a-zA-Z]+[A-Z][a-zA-Z]*)=',
+        lambda m: m.group(1) + 'sc-camel-'
+        + re.sub(r'[A-Z]', lambda c: '-' + c.group(0).lower(), m.group(2)) + '=',
+        text)
+    text = re.sub(r'<select([\s>])', r'<sc-raw-select\1', text)
+    return text.replace('</select>', '</sc-raw-select>')
+
+
+def committed_src():
+    """Исходник из последнего коммита — по нему проверяем преобразование."""
+    try:
+        r = subprocess.run(['git', 'show', 'HEAD:src/FORTIS Markdown Editor.dc.html'],
+                           cwd=ROOT, capture_output=True, text=True)
+        return r.stdout if r.returncode == 0 and r.stdout else None
+    except OSError:
+        return None
 
 
 def parts(text, rx):
@@ -84,6 +118,26 @@ def main() -> int:
     targets = tpl_styles[len(tpl_styles) - len(src_styles):]
 
     edits, diffs = [], []
+
+    src_markup, tpl_markup = MARKUP_RE.search(src), MARKUP_RE.search(tpl)
+    if src_markup and tpl_markup:
+        new_markup = markup(src_markup.group(1))
+        # Проверяем преобразование на закоммиченной версии: если разметка
+        # сборки получается из неё побайтово, значит markup() ничего не теряет.
+        # Когда сборка уже ушла вперёд коммита (правку перенесли, но ещё не
+        # закоммитили), сверять не с чем — тогда проверку пропускаем.
+        prev = committed_src()
+        prev_markup = MARKUP_RE.search(prev) if prev else None
+        if prev_markup:
+            base = markup(prev_markup.group(1))
+            if base != tpl_markup.group(1) and new_markup != tpl_markup.group(1):
+                print('разметка сборки не сходится ни с коммитом, ни с исходником — '
+                      'генератор делает что-то ещё, перенос отменён')
+                return 2
+        if new_markup != tpl_markup.group(1):
+            diffs.append('разметка: %d → %d символов'
+                         % (len(tpl_markup.group(1)), len(new_markup)))
+            edits.append((tpl_markup.start(1), tpl_markup.end(1), new_markup))
     for (s, e, old), (_, _, new) in zip([tpl_scripts[0]], [src_scripts[0]]):
         if old != new:
             diffs.append(f'логика редактора: {len(old)} → {len(new)} символов')

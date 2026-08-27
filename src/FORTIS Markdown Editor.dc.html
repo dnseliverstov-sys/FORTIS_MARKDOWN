@@ -246,7 +246,7 @@
       <div ref="{{ zoomRef }}" style="flex:1;min-height:0;display:flex;background:var(--color-paper, var(--color-bg))">
         <sc-if value="{{ showEditorPane }}" hint-placeholder-val="{{ true }}">
           <div ref="{{ scrollRef }}" onScroll="{{ onLeftScroll }}" style="flex:{{ paneAFlex }};min-width:0;overflow:auto">
-            <div ref="{{ edRef }}" class="mdb" contentEditable="{{ wysiwyg }}" suppressContentEditableWarning="{{ true }}" spellCheck="{{ spell }}" onInput="{{ onDomInput }}" onClick="{{ onDomClick }}" onBlur="{{ onDomInput }}" onKeyDown="{{ onEdKeyDown }}" onContextMenu="{{ onCtx }}"></div>
+            <div ref="{{ edRef }}" class="mdb" contentEditable="{{ wysiwyg }}" suppressContentEditableWarning="{{ true }}" spellCheck="{{ spell }}" onInput="{{ onDomInput }}" onClick="{{ onDomClick }}" onBlur="{{ onDomInput }}" onKeyDown="{{ onEdKeyDown }}" onContextMenu="{{ onCtx }}" onMouseDown="{{ onEdDown }}" onMouseMove="{{ onEdMove }}"></div>
           </div>
         </sc-if>
         <sc-if value="{{ splitMode }}" hint-placeholder-val="{{ false }}">
@@ -1300,9 +1300,10 @@ class Component extends DCLogic {
     // Объединённые ячейки разметкой таблиц выразить нечем: в ней нет ни
     // colspan, ни rowspan. Такую таблицу сохраняем как HTML, обычные
     // остаются обычными.
-    if (Array.from(t.querySelectorAll('td,th')).some((c) => (c.colSpan || 1) > 1 || (c.rowSpan || 1) > 1)) {
-      return this.tableHtmlMd(t);
-    }
+    // Ширины столбцов разметкой тоже не выражаются — как и объединения.
+    const особые = Array.from(t.querySelectorAll('td,th')).some((c) =>
+      (c.colSpan || 1) > 1 || (c.rowSpan || 1) > 1 || (c.style && c.style.width));
+    if (особые) return this.tableHtmlMd(t);
     const cells = (tr) => Array.from(tr.children).map((c) => this.inlMd(c).trim().replace(/\|/g, '\\|'));
     const head = cells(rows[0]);
     // Выравнивание живёт в стиле ячеек шапки — возвращаем его двоеточиями.
@@ -1320,8 +1321,12 @@ class Component extends DCLogic {
       let at = '';
       if ((c.colSpan || 1) > 1) at += ' colspan="' + c.colSpan + '"';
       if ((c.rowSpan || 1) > 1) at += ' rowspan="' + c.rowSpan + '"';
-      const a = c.style && c.style.textAlign;
-      if (a) at += ' align="' + a + '"';
+      // Стилем, а не устаревшим align: только так выравнивание и ширина
+      // переживают обратное чтение файла.
+      const st = [];
+      if (c.style && c.style.textAlign) st.push('text-align:' + c.style.textAlign);
+      if (c.style && c.style.width) st.push('width:' + c.style.width);
+      if (st.length) at += ' style="' + st.join(';') + '"';
       return '<' + tag + at + '>' + c.innerHTML.replace(/&nbsp;/g, ' ').trim() + '</' + tag + '>';
     };
     const part = (host) => Array.from(host.children)
@@ -1614,7 +1619,10 @@ class Component extends DCLogic {
       Array.from(table.querySelectorAll('tr')).forEach((row) => {
         const head = row.children[0] && row.children[0].tagName === 'TH';
         const c = document.createElement(head ? 'th' : 'td');
-        c.innerHTML = head ? 'Столбец' : '&nbsp;';
+        // Кнопка вставки таблицы называет столбцы «Столбец N». Здесь было
+        // просто «Столбец» — из-за автоширины новый столбец выходил другой
+        // ширины, чем соседние.
+        c.innerHTML = head ? 'Столбец ' + (idx + (op === 'colLeft' ? 1 : 2)) : '&nbsp;';
         const ref = row.children[idx];
         row.insertBefore(c, op === 'colLeft' ? ref : (ref ? ref.nextSibling : null));
       });
@@ -2416,6 +2424,55 @@ class Component extends DCLogic {
     return (e.ctrlKey || e.metaKey ? 'Ctrl+' : '') + (e.shiftKey ? 'Shift+' : '') + (e.altKey ? 'Alt+' : '') + k;
   }
 
+  /* ---------- ширина столбцов ---------- */
+
+  EDGE = 6; // насколько близко к границе надо подвести курсор
+
+  atEdge(e) {
+    const cell = e.target && e.target.closest ? e.target.closest('th,td') : null;
+    if (!cell || !this.edRef.current || !this.edRef.current.contains(cell)) return null;
+    return cell.getBoundingClientRect().right - e.clientX <= this.EDGE ? cell : null;
+  }
+
+  onEdMove = (e) => {
+    const el = this.edRef.current;
+    if (!el || this.state.mode === 'markup') return;
+    const want = this.atEdge(e) ? 'col-resize' : '';
+    if (el.style.cursor !== want) el.style.cursor = want;
+  };
+
+  onEdDown = (e) => {
+    if (e.button !== 0 || this.state.mode === 'markup') return;
+    const cell = this.atEdge(e);
+    if (!cell) return;
+    const table = cell.closest('table');
+    const head = table && table.querySelector('tr');
+    if (!head) return;
+
+    // У объединённой ячейки правая граница принадлежит последнему её столбцу.
+    const at = this.cellAt(this.tableGrid(table).grid, cell);
+    const col = at ? at.c + (cell.colSpan || 1) - 1 : -1;
+    const target = head.children[col];
+    if (!target) return;
+
+    e.preventDefault();
+    // Закрепляем текущие ширины: иначе соседние столбцы поедут вслед за этим.
+    Array.from(head.children).forEach((c) => {
+      if (!c.style.width) c.style.width = Math.round(c.getBoundingClientRect().width) + 'px';
+    });
+
+    const x0 = e.clientX;
+    const w0 = target.getBoundingClientRect().width;
+    const move = (ev) => { target.style.width = Math.max(48, Math.round(w0 + ev.clientX - x0)) + 'px'; };
+    const up = () => {
+      document.removeEventListener('mousemove', move);
+      document.removeEventListener('mouseup', up);
+      this.onDomInput();
+    };
+    document.addEventListener('mousemove', move);
+    document.addEventListener('mouseup', up);
+  };
+
   /* ---------- объединение ячеек ---------- */
 
   // Раскладка таблицы с учётом уже объединённых ячеек: grid[строка][столбец]
@@ -2754,8 +2811,47 @@ class Component extends DCLogic {
 
   onCtx = (e) => {
     e.preventDefault();
-    this.setState({ ctx: { x: e.clientX, y: e.clientY } });
+    // Запоминаем ячейку под курсором: операции с таблицей должны работать
+    // над той ячейкой, по которой щёлкнули, а не над той, где стоит курсор.
+    const cell = e.target && e.target.closest ? e.target.closest('td,th') : null;
+    this._ctxCell = cell && this.edRef.current && this.edRef.current.contains(cell) ? cell : null;
+    this.setState({ ctx: { x: e.clientX, y: e.clientY, inTable: !!this._ctxCell } });
   };
+
+  ctxTable(op) {
+    const cell = this._ctxCell;
+    if (cell && cell.isConnected) {
+      const sel = window.getSelection(); const r = document.createRange();
+      r.selectNodeContents(cell); r.collapse(false);
+      sel.removeAllRanges(); sel.addRange(r);
+      if (this.edRef.current) this.edRef.current.focus();
+    }
+    this.setState({ ctx: null }, () => this.tableOp(op));
+  }
+
+  ctxMenu(s) {
+    const base = [
+      { key: 'line', label: 'Выделить строку', icon: 'ph ph-text-align-left', run: () => this.ctxRun('line') },
+      { key: 'copy', label: 'Копировать', icon: 'ph ph-copy', run: () => this.ctxRun('copy') },
+      { key: 'cut', label: 'Вырезать', icon: 'ph ph-scissors', run: () => this.ctxRun('cut') },
+      { key: 'paste', label: 'Вставить', icon: 'ph ph-clipboard-text', run: () => this.ctxRun('paste') },
+      { key: 'link', label: 'Вставить ссылку', icon: 'ph ph-link', run: () => this.ctxRun('link') }
+    ];
+    if (!(s.ctx && s.ctx.inTable)) return base;
+    const t = (op, label, icon) => ({ key: 'ctx-' + op, label: label, icon: icon, run: () => this.ctxTable(op) });
+    return [
+      t('rowAbove', 'Строка выше', 'ph ph-rows-plus-top'),
+      t('rowBelow', 'Строка ниже', 'ph ph-rows-plus-bottom'),
+      t('colLeft', 'Столбец слева', 'ph ph-columns-plus-left'),
+      t('colRight', 'Столбец справа', 'ph ph-columns-plus-right'),
+      t('mergeRight', 'Объединить с правой', 'ph ph-arrows-in-line-horizontal'),
+      t('mergeDown', 'Объединить с нижней', 'ph ph-arrows-in-line-vertical'),
+      t('splitCell', 'Разъединить ячейку', 'ph ph-arrows-out-line-horizontal'),
+      t('delRow', 'Удалить строку', 'ph ph-minus'),
+      t('delCol', 'Удалить столбец', 'ph ph-minus'),
+      t('delTable', 'Удалить таблицу', 'ph ph-trash')
+    ].concat(base.slice(1));
+  }
 
   ctxRun = async (op) => {
     this.setState({ ctx: null });
@@ -3139,6 +3235,7 @@ class Component extends DCLogic {
       md: md,
       onDomInput: this.onDomInput, onDomClick: this.onDomClick, onMdInput: this.onMdInput,
       onEdKeyDown: this.onEdKeyDown, onTaKeyDown: this.onTaKeyDown, onCtx: this.onCtx, spell: s.spell,
+      onEdDown: this.onEdDown, onEdMove: this.onEdMove,
       scrollRef: this.scrollRef, onLeftScroll: this.onLeftScroll, onRightScroll: this.onRightScroll,
       paneAFlex: s.mode === 'split' ? '0 0 var(--split-a, 50%)' : '1',
       resizeTree: this.startResize('tree'), resizeDoc: this.startResize('doc'), resizeSplit: this.startResize('split'),
@@ -3165,13 +3262,7 @@ class Component extends DCLogic {
       copyDesc: () => this.copyDescription(),
       ctxOpen: !!s.ctx,
       ctxX: (s.ctx ? s.ctx.x : 0) + 'px', ctxY: (s.ctx ? s.ctx.y : 0) + 'px',
-      ctxItems: [
-        { key: 'line', label: 'Выделить строку', icon: 'ph ph-text-align-left', run: () => this.ctxRun('line') },
-        { key: 'copy', label: 'Копировать', icon: 'ph ph-copy', run: () => this.ctxRun('copy') },
-        { key: 'cut', label: 'Вырезать', icon: 'ph ph-scissors', run: () => this.ctxRun('cut') },
-        { key: 'paste', label: 'Вставить', icon: 'ph ph-clipboard-text', run: () => this.ctxRun('paste') },
-        { key: 'link', label: 'Вставить ссылку', icon: 'ph ph-link', run: () => this.ctxRun('link') }
-      ],
+      ctxItems: this.ctxMenu(s),
       closeCtx: () => this.setState({ ctx: null }),
       toastText: s.toastText || '', toastOpen: !!s.toastText,
       recoveryOpen: !!s.recovery,
