@@ -50,7 +50,9 @@
   .mdb li{margin:4px 0}
   .mdb li::marker{color:var(--color-neutral-600)}
   .mdb input[type=checkbox]{margin:0 8px 0 0;accent-color:var(--color-accent);vertical-align:middle}
-  .mdb table{border-collapse:collapse;width:100%;margin:0 0 18px;font-size:14px}
+  /* display:block даёт таблице свою горизонтальную прокрутку: без него широкая
+     таблица вылезала за пределы документа и обрезалась окном. */
+  .mdb table{border-collapse:collapse;width:100%;margin:0 0 18px;font-size:14px;display:block;overflow-x:auto}
   .mdb th,.mdb td{border:1px solid var(--color-neutral-800);padding:7px 11px;text-align:left;vertical-align:top}
   .mdb th{background:var(--color-neutral-900);font-weight:500;color:var(--color-neutral-200)}
   .mdb hr{border:0;height:1px;margin:28px 0;background:linear-gradient(90deg,transparent,var(--color-neutral-700) 48px,var(--color-neutral-700) calc(100% - 48px),transparent)}
@@ -1119,13 +1121,13 @@ class Component extends DCLogic {
         let type = null;
         const a = buf[0] && buf[0].match(/^\[!(\w+)\]\s*$/);
         if (a && ALERTS.indexOf(a[1].toUpperCase()) >= 0) { type = a[1].toUpperCase(); buf.shift(); }
-        const paras = [];
-        buf.forEach((x) => {
-          if (!x.trim()) { paras.push(null); return; }
-          if (paras.length && paras[paras.length - 1]) paras[paras.length - 1] += ' ' + x.trim();
-          else paras.push(x.trim());
-        });
-        const body = paras.filter(Boolean).map((x) => '<p>' + this.inline(x) + '</p>').join('');
+        // Содержимое цитаты разбираем тем же разборщиком, а не склеиваем в абзацы:
+        // иначе таблица, список или заголовок внутри цитаты схлопывались в одну
+        // строку текста. Каждый уровень снимает один '>', поэтому рекурсия конечна.
+        const nested = this.parse(buf.join('\n'));
+        nested.toc.forEach((x) => toc.push(x));
+        nested.links.forEach((x) => links.push(x));
+        const body = nested.html;
         if (type) out.push('<blockquote data-alert="' + type + '"><span class="al">' + ALERT_RU[type] + '</span>' + body + '</blockquote>');
         else out.push('<blockquote>' + body + '</blockquote>');
         continue;
@@ -1213,11 +1215,24 @@ class Component extends DCLogic {
       const inner = Array.from(n.childNodes)
         .filter((c) => !(c.nodeType === 1 && c.classList && c.classList.contains('al')))
         .map((c) => this.blockMd(c)).filter(Boolean).join('\n\n');
-      const body = inner.split('\n').map((x) => ('> ' + x).replace(/\s+$/, '>')).join('\n');
+      // Пустая строка внутри цитаты — это '>', а не '>>': второй символ читается
+      // при следующем разборе как вложенная цитата, и таблица уезжает внутрь неё.
+      const body = inner.split('\n').map((x) => ('> ' + x).replace(/\s+$/, '')).join('\n');
       return al ? '> [!' + al + ']\n' + body : body;
     }
     if (tag === 'UL' || tag === 'OL') return this.listMd(n, 0);
     if (tag === 'TABLE') return this.tableMd(n);
+    // Браузер при вставке иногда разрывает таблицу, и thead или tr остаются
+    // сами по себе. Без разбора этого случая ячейки склеивались в одно слово.
+    if (tag === 'THEAD' || tag === 'TBODY' || tag === 'TFOOT') {
+      return Array.from(n.children).map((c) => this.blockMd(c)).filter(Boolean).join('\n');
+    }
+    if (tag === 'TR') {
+      const cs = Array.from(n.children).map((c) => this.inlMd(c).trim().replace(/\|/g, '\\|'));
+      const row = '| ' + cs.join(' | ') + ' |';
+      const head = n.children.length && n.children[0].tagName === 'TH';
+      return head ? row + '\n| ' + cs.map(() => '---').join(' | ') + ' |' : row;
+    }
     if (tag === 'BR') return '';
     if (tag === 'P' || tag === 'DIV' || tag === 'SECTION' || tag === 'ARTICLE') {
       if (n.querySelector('p,h1,h2,h3,h4,h5,h6,ul,ol,pre,table,blockquote,hr')) {
