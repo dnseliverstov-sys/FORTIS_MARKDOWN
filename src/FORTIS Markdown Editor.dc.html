@@ -1075,7 +1075,10 @@ class Component extends DCLogic {
     s = s.replace(/~~([^~]+)~~/g, '<del>$1</del>');
     s = s.replace(/(^|[\s(])_([^_]+)_(?=[\s.,;:)!?]|$)/g, '$1<em>$2</em>');
     s = s.replace(/\*([^*]+)\*/g, '<em>$1</em>');
-    s = s.replace(/\$([^$\n]+?)\$/g, (m, tex) => '<span class="math-inline" data-tex="' + tex.replace(/"/g, '&quot;') + '"></span>');
+    // Доллары должны прилегать к формуле вплотную — так же считают KaTeX и
+    // Pandoc. Прежнее правило допускало пробелы, и «цена $100 и $200»
+    // превращалась в формулу, съедая текст между суммами.
+    s = s.replace(/\$(?!\s)([^$\n]*?[^$\s])\$/g, (m, tex) => '<span class="math-inline" data-tex="' + tex.replace(/"/g, '&quot;') + '"></span>');
     s = this.linkifyKeys(s);
     s = s.replace(/\u0001(\d+)\u0001/g, (m, i) => '<code>' + codes[+i] + '</code>');
     return s;
