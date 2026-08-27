@@ -1,8 +1,43 @@
 'use strict';
 
+const fs = require('node:fs');
+
+// Ищем графический дисплей ДО подключения Electron: Chromium читает DISPLAY
+// при запуске, и позже подставлять уже поздно.
+//
+// В обычном рабочем столе переменную задаёт сам сеанс. Но если приложение
+// запускают оттуда, где она потерялась — по ssh, из systemd-юнита, из урезанного
+// терминала, — Chromium не знает, куда рисовать, и падает. В этом случае ищем
+// сокет запущенного X-сервера сами: Linux держит их в /tmp/.X11-unix под
+// именами X0, X1 и так далее.
+//
+// Если сокетов нет, X-сервера просто не запущено, и подставлять нечего:
+// приложение оконное, без графического сеанса ему не на чем рисовать.
+if (process.platform === 'linux' && !process.env.DISPLAY && !process.env.WAYLAND_DISPLAY) {
+  try {
+    const socket = fs.readdirSync('/tmp/.X11-unix')
+      .filter((f) => /^X\d+$/.test(f))
+      .sort((a, b) => Number(a.slice(1)) - Number(b.slice(1)))[0];
+    if (socket) process.env.DISPLAY = ':' + socket.slice(1);
+  } catch { /* каталога нет — помочь нечем, пусть Electron скажет сам */ }
+}
+
 const { app, BrowserWindow, Menu, dialog, ipcMain, net, protocol, shell } = require('electron');
 const path = require('node:path');
-const fs = require('node:fs');
+
+// Аппаратное ускорение отключаем только там, где графической карты нет:
+// на виртуальных машинах, в контейнерах и на серверах каталог /dev/dri
+// отсутствует, а Chromium всё равно лезет в GPU и падает с «GPU process
+// isn't usable». На настоящем рабочем столе ускорение нужно — без него
+// прокрутка и ввод заметно медленнее, поэтому отключать его всем подряд
+// не стоит.
+if (process.platform === 'linux') {
+  let hasGpu = false;
+  try {
+    hasGpu = fs.readdirSync('/dev/dri').some((f) => /^(card|render)/.test(f));
+  } catch { hasGpu = false; }
+  if (!hasGpu) app.disableHardwareAcceleration();
+}
 const fsp = require('node:fs/promises');
 const os = require('node:os');
 const { pathToFileURL } = require('node:url');
