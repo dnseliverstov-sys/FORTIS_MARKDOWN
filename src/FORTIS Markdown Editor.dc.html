@@ -669,13 +669,26 @@
           <div>
             <div style="font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--color-neutral-500);margin-bottom:8px">Палитра</div>
             <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
-              <sc-for list="{{ palettes }}" as="p" hint-placeholder-count="6">
+              <sc-for list="{{ palettes }}" as="p" hint-placeholder-count="9">
                 <button onClick="{{ p.run }}" title="{{ p.note }}" style="display:flex;flex-direction:column;gap:8px;padding:9px;border:1px solid {{ p.border }};border-radius:var(--r-lg, 9px);background:transparent;text-align:left" style-hover="border-color:var(--color-accent-500)">
-                  <span style="display:flex;align-items:stretch;height:34px;border-radius:var(--r-xs, 4px);overflow:hidden;background:{{ p.bg }}">
-                    <span style="flex:0 0 32%;background:{{ p.panel }}"></span>
-                    <span style="flex:1;display:flex;flex-direction:column;justify-content:center;gap:4px;padding:0 7px">
-                      <span style="height:4px;width:78%;border-radius:2px;background:{{ p.line1 }}"></span>
-                      <span style="height:3px;width:44%;border-radius:2px;background:{{ p.mark }}"></span>
+                  <span style="display:flex;flex-direction:column;height:52px;border-radius:var(--r-xs, 4px);overflow:hidden;background:{{ p.bg }};box-shadow:inset 0 0 0 1px {{ p.edge }}">
+                    <span style="flex:0 0 9px;display:flex;align-items:center;gap:3px;padding:0 4px;background:{{ p.chrome }}">
+                      <span style="width:9px;height:3px;border-radius:1px;background:{{ p.mark }}"></span>
+                      <span style="width:5px;height:3px;border-radius:1px;background:{{ p.line2 }}"></span>
+                      <span style="width:5px;height:3px;border-radius:1px;background:{{ p.line2 }}"></span>
+                    </span>
+                    <span style="flex:1;display:flex;min-height:0">
+                      <span style="flex:0 0 26%;display:flex;flex-direction:column;justify-content:center;gap:4px;padding:0 4px;background:{{ p.chrome }}">
+                        <span style="height:2px;width:88%;border-radius:1px;background:{{ p.line2 }}"></span>
+                        <span style="height:2px;width:62%;border-radius:1px;background:{{ p.line2 }}"></span>
+                        <span style="height:2px;width:74%;border-radius:1px;background:{{ p.line2 }}"></span>
+                      </span>
+                      <span style="flex:1;display:flex;flex-direction:column;justify-content:center;gap:4px;padding:0 7px;background:{{ p.paper }}">
+                        <span style="height:5px;width:58%;border-radius:1px;background:{{ p.mark }}"></span>
+                        <span style="height:2px;width:94%;border-radius:1px;background:{{ p.line1 }}"></span>
+                        <span style="height:2px;width:86%;border-radius:1px;background:{{ p.line1 }}"></span>
+                        <span style="height:2px;width:48%;border-radius:1px;background:{{ p.line2 }}"></span>
+                      </span>
                     </span>
                   </span>
                   <span style="display:flex;align-items:baseline;justify-content:space-between;gap:6px">
@@ -691,11 +704,21 @@
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
               <sc-for list="{{ styles }}" as="st" hint-placeholder-count="4">
                 <button onClick="{{ st.run }}" title="{{ st.full }}" style="display:flex;align-items:center;gap:11px;padding:10px;border:1px solid {{ st.border }};border-radius:var(--r-lg, 9px);background:transparent;text-align:left" style-hover="border-color:var(--color-accent-500)">
-                  <span style="display:flex;align-items:stretch;flex:0 0 46px;height:34px;border-radius:var(--r-xs, 4px);overflow:hidden;background:{{ st.bg }}">
-                    <span style="flex:0 0 32%;background:{{ st.panel }}"></span>
-                    <span style="flex:1;display:flex;flex-direction:column;justify-content:center;gap:4px;padding:0 5px">
-                      <span style="height:4px;width:80%;border-radius:2px;background:{{ st.line1 }}"></span>
-                      <span style="height:3px;width:45%;border-radius:2px;background:{{ st.mark }}"></span>
+                  <span style="display:flex;flex-direction:column;flex:0 0 66px;height:48px;border-radius:var(--r-xs, 4px);overflow:hidden;background:{{ st.bg }};box-shadow:inset 0 0 0 1px {{ st.edge }}">
+                    <span style="flex:0 0 8px;display:flex;align-items:center;gap:3px;padding:0 3px;background:{{ st.chrome }}">
+                      <span style="width:8px;height:3px;border-radius:1px;background:{{ st.mark }}"></span>
+                      <span style="width:4px;height:3px;border-radius:1px;background:{{ st.line2 }}"></span>
+                    </span>
+                    <span style="flex:1;display:flex;min-height:0">
+                      <span style="flex:0 0 24%;display:flex;flex-direction:column;justify-content:center;gap:3px;padding:0 3px;background:{{ st.chrome }}">
+                        <span style="height:2px;width:86%;border-radius:1px;background:{{ st.line2 }}"></span>
+                        <span style="height:2px;width:60%;border-radius:1px;background:{{ st.line2 }}"></span>
+                      </span>
+                      <span style="flex:1;display:flex;flex-direction:column;justify-content:center;gap:3px;padding:0 5px;background:{{ st.paper }}">
+                        <span style="height:4px;width:60%;border-radius:1px;background:{{ st.mark }}"></span>
+                        <span style="height:2px;width:92%;border-radius:1px;background:{{ st.line1 }}"></span>
+                        <span style="height:2px;width:78%;border-radius:1px;background:{{ st.line1 }}"></span>
+                      </span>
                     </span>
                   </span>
                   <span style="display:flex;flex-direction:column;gap:3px;min-width:0">
@@ -823,6 +846,55 @@ const THEMES = [
     id: 'indigo', name: 'Индиго', tag: 'тёмная', note: 'Насыщенный индиговый грунт — тот же, что у разделителей в презентациях.',
     swatch: { bg: '#1b1f4a', panel: '#262a60', line1: '#e4e7f5', line2: '#9397ab', mark: '#b5abfc' },
     vars: { '--color-bg': '#1b1f4a', '--color-surface': '#262a60', '--color-neutral-900': '#232760', '--color-neutral-800': '#353b80', '--color-neutral-700': '#4c5397', '--color-neutral-600': '#6b71ad', '--color-code-bg': '#161a3f' }
+  },
+  {
+    id: 'taiga', name: 'Тайга', tag: 'тёмная', note: 'Хвойный грунт с бирюзовым акцентом — тёмная тема без синевы.',
+    swatch: { bg: '#0e1a16', panel: '#16241f', line1: '#dcebe4', line2: '#6d8a7b', mark: '#4fc79f' },
+    vars: {
+      '--color-bg': '#0e1a16', '--color-surface': '#16241f', '--color-chrome': '#101d18',
+      '--color-paper': '#0e1a16', '--color-edge': '#22352c', '--color-text': '#dcebe4',
+      '--color-neutral-900': '#16241f', '--color-neutral-800': '#22352c', '--color-neutral-700': '#33493e',
+      '--color-neutral-600': '#4f6b5d', '--color-neutral-500': '#6d8a7b', '--color-neutral-400': '#86a294',
+      '--color-neutral-300': '#a8c0b4', '--color-neutral-200': '#d3e3da', '--color-neutral-100': '#eaf4ef',
+      '--color-accent': '#4fc79f', '--color-accent-300': '#4fc79f', '--color-accent-500': '#6fd9b5',
+      '--color-accent-600': '#8fe6c8', '--color-accent-700': '#1f5a46', '--color-accent-800': '#143a2d',
+      '--color-accent-900': '#0f2a21', '--color-code-bg': '#0a1512',
+      '--shadow-md': '0 0 0 1px #33493e, 0 8px 24px rgba(0,0,0,.55)',
+      '--shadow-lg': '0 0 0 1px #4f6b5d, 0 18px 44px rgba(0,0,0,.65)'
+    }
+  },
+  {
+    id: 'cobalt', name: 'Кобальт', tag: 'тёмная', note: 'Плотный морской синий с лазурным акцентом — контрастно и холодно.',
+    swatch: { bg: '#0a1524', panel: '#12203a', line1: '#dbe7f8', line2: '#6b86ab', mark: '#4ea3ff' },
+    vars: {
+      '--color-bg': '#0a1524', '--color-surface': '#12203a', '--color-chrome': '#0c1a2e',
+      '--color-paper': '#0a1524', '--color-edge': '#1f3358', '--color-text': '#dbe7f8',
+      '--color-neutral-900': '#12203a', '--color-neutral-800': '#1f3358', '--color-neutral-700': '#2d4a76',
+      '--color-neutral-600': '#4a6a99', '--color-neutral-500': '#6b86ab', '--color-neutral-400': '#89a2c2',
+      '--color-neutral-300': '#a9bfd8', '--color-neutral-200': '#cfdcee', '--color-neutral-100': '#eaf1fa',
+      '--color-accent': '#4ea3ff', '--color-accent-300': '#4ea3ff', '--color-accent-500': '#78bcff',
+      '--color-accent-600': '#a2d2ff', '--color-accent-700': '#1c4c80', '--color-accent-800': '#123256',
+      '--color-accent-900': '#0d2440', '--color-code-bg': '#071120',
+      '--shadow-md': '0 0 0 1px #2d4a76, 0 8px 24px rgba(0,0,0,.55)',
+      '--shadow-lg': '0 0 0 1px #4a6a99, 0 18px 44px rgba(0,0,0,.65)'
+    }
+  },
+  {
+    id: 'sepia', name: 'Сепия', tag: 'светлая', note: 'Тёплый песочный грунт и охристый акцент — мягко для глаз при долгом чтении.',
+    swatch: { bg: '#f2e9d8', panel: '#ece0c9', line1: '#3a3226', line2: '#857966', mark: '#9a6f31' },
+    vars: {
+      '--color-bg': '#f2e9d8', '--color-surface': '#fbf5e9', '--color-text': '#3a3226',
+      '--color-neutral-100': '#3a3226', '--color-neutral-200': '#4a4033', '--color-neutral-300': '#5c5140',
+      '--color-neutral-400': '#5a4f3e', '--color-neutral-500': '#6d6150', '--color-neutral-600': '#857966',
+      '--color-neutral-700': '#ddd0b8', '--color-neutral-800': '#e9dec8', '--color-neutral-900': '#f5edde',
+      '--color-accent': '#9a6f31', '--color-accent-100': '#3d2a12', '--color-accent-200': '#5a3f1c',
+      '--color-accent-300': '#7a5726', '--color-accent-400': '#9a6f31', '--color-accent-500': '#b8863d',
+      '--color-accent-600': '#cfa055', '--color-accent-700': '#e3c48c', '--color-accent-800': '#f0dcb6',
+      '--color-accent-900': '#f8eed8',
+      '--color-code-bg': '#f0e6d2', '--color-chrome': '#ece0c9', '--color-paper': '#fdf8ee', '--color-edge': '#ddd0b8',
+      '--shadow-md': '0 0 0 1px #ddd0b8, 0 6px 18px rgba(58,50,38,0.16)',
+      '--shadow-lg': '0 0 0 1px #c9b895, 0 16px 40px rgba(58,50,38,0.22)'
+    }
   },
   {
     id: 'light', name: 'Светлая', tag: 'светлая', note: 'Тот же интерфейс на светлом грунте: печать, презентация, яркий свет.',
@@ -1056,7 +1128,7 @@ class Component extends DCLogic {
   }
 
   defaultTb() {
-    return ['new', 'open', 'openws', 'save', 'saveas', 'closetab', 'undo', 'redo', 'find', 'zoomin', 'zoomout', 'docpanel', 'tree'];
+    return ['new', 'open', 'openws', 'save', 'saveas', 'closetab', 'undo', 'redo', 'find', 'zoomin', 'zoomout', 'zoomreset', 'docpanel', 'tree'];
   }
 
   /* ---------- markdown -> html ---------- */
@@ -3165,6 +3237,9 @@ class Component extends DCLogic {
       palettes: THEMES.filter((th) => th.tag !== 'стиль').map((th) => ({
         key: th.id, name: th.name, tag: th.tag, note: th.note,
         bg: th.swatch.bg, panel: th.swatch.panel, line1: th.swatch.line1, line2: th.swatch.line2, mark: th.swatch.mark,
+        chrome: th.vars['--color-chrome'] || th.swatch.panel,
+        paper: th.vars['--color-paper'] || th.swatch.bg,
+        edge: th.vars['--color-edge'] || th.swatch.panel,
         border: s.theme === th.id ? 'var(--color-accent)' : 'var(--color-neutral-800)',
         tagColor: s.theme === th.id ? 'var(--color-accent-300)' : 'var(--color-neutral-500)',
         run: () => this.setState({ theme: th.id }, () => this.applyTheme(th.id))
@@ -3172,12 +3247,18 @@ class Component extends DCLogic {
       styles: THEMES.filter((th) => th.tag === 'стиль').map((th) => ({
         key: th.id, name: th.name, note: th.short || th.note, full: th.note,
         bg: th.swatch.bg, panel: th.swatch.panel, line1: th.swatch.line1, line2: th.swatch.line2, mark: th.swatch.mark,
+        chrome: th.vars['--color-chrome'] || th.swatch.panel,
+        paper: th.vars['--color-paper'] || th.swatch.bg,
+        edge: th.vars['--color-edge'] || th.swatch.panel,
         border: s.theme === th.id ? 'var(--color-accent)' : 'var(--color-neutral-800)',
         run: () => this.setState({ theme: th.id }, () => this.applyTheme(th.id))
       })),
       themeCards: THEMES.map((th) => ({
         key: th.id, name: th.name, tag: th.tag, note: th.note,
         bg: th.swatch.bg, panel: th.swatch.panel, line1: th.swatch.line1, line2: th.swatch.line2, mark: th.swatch.mark,
+        chrome: th.vars['--color-chrome'] || th.swatch.panel,
+        paper: th.vars['--color-paper'] || th.swatch.bg,
+        edge: th.vars['--color-edge'] || th.swatch.panel,
         border: s.theme === th.id ? 'var(--color-accent)' : 'var(--color-neutral-800)',
         tagColor: s.theme === th.id ? 'var(--color-accent-300)' : 'var(--color-neutral-600)',
         run: () => this.setState({ theme: th.id }, () => this.applyTheme(th.id))
