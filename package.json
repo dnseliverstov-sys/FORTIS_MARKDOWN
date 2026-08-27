@@ -3,11 +3,8 @@
   "productName": "FORTIS Markdown Editor",
   "version": "1.0.0",
   "description": "Настольный markdown-редактор FORTIS: работа с папкой, вкладки, WYSIWYG и разметка, экспорт и импорт",
-  "homepage": "https://github.com/GITHUB_ACCOUNT/fortis-markdown-editor",
-  "author": {
-    "name": "Дмитрий Селиверстов",
-    "email": "GITHUB_ACCOUNT@users.noreply.github.com"
-  },
+  "homepage": "https://fortis.local/markdown-editor",
+  "author": "Дмитрий Селиверстов",
   "main": "app/main.js",
   "private": true,
   "license": "UNLICENSED",
@@ -17,8 +14,8 @@
     "dist": "electron-builder",
     "dist:mac": "electron-builder --mac",
     "dist:win": "electron-builder --win",
-    "dist:linux": "electron-builder --linux",
-    "account": "node scripts/set-account.js"
+    "dist:linux": "node scripts/set-project.js --check && electron-builder --linux",
+    "project": "node scripts/set-project.js"
   },
   "devDependencies": {
     "electron": "^44.0.0",
@@ -120,7 +117,9 @@
       ],
       "category": "Office",
       "synopsis": "Настольный markdown-редактор FORTIS",
-      "syncDesktopName": true
+      "syncDesktopName": true,
+      "maintainer": "FORTIS Markdown Editor <fortis@localhost>",
+      "vendor": "FORTIS"
     },
     "afterPack": "./scripts/adhoc-sign.js",
     "deb": {
