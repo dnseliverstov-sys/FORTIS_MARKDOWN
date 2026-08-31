@@ -11,6 +11,10 @@ const PACKAGE_FILE = path.join(ROOT, 'package.json');
 const LOCK_FILE = path.join(ROOT, 'package-lock.json');
 const MODULES_DIR = path.join(ROOT, 'node_modules');
 const STATE_FILE = path.join(MODULES_DIR, '.fortis-runtime.json');
+const RENDERER_STATE_FILE = path.join(MODULES_DIR, '.fortis-renderer.json');
+const RENDERER_DIR = path.join(ROOT, 'renderer');
+const RENDERER_OUTPUT = path.join(ROOT, 'app', 'index.html');
+const RENDERER_ASSETS = path.join(ROOT, 'app', 'renderer-assets');
 const MINIMUM_NODE = '22.12.0';
 
 function versionAtLeast(current, minimum) {
@@ -36,6 +40,32 @@ function runtimeFingerprint(packageData, lockData, runtime = {}) {
     arch: runtime.arch || process.arch,
     modules: runtime.modules || process.versions.modules
   }));
+  return hash.digest('hex');
+}
+
+function rendererFingerprint(packageData, lockData) {
+  const hash = crypto.createHash('sha256');
+  hash.update('fortis-renderer-v1\0');
+  hash.update(packageData);
+  hash.update('\0');
+  hash.update(lockData);
+  hash.update('\0');
+  for (const file of ['vite.config.mts', 'tsconfig.json']) {
+    const absolute = path.join(ROOT, file);
+    hash.update(file + '\0');
+    hash.update(fs.readFileSync(absolute));
+  }
+  const visit = (directory) => {
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+      const absolute = path.join(directory, entry.name);
+      if (entry.isDirectory()) visit(absolute);
+      else if (entry.isFile()) {
+        hash.update(path.relative(ROOT, absolute).replace(/\\/g, '/') + '\0');
+        hash.update(fs.readFileSync(absolute));
+      }
+    }
+  };
+  visit(RENDERER_DIR);
   return hash.digest('hex');
 }
 
@@ -154,6 +184,50 @@ function ensureDependencies(cli, fingerprint) {
   return installDependencies(cli, fingerprint);
 }
 
+function readRendererState() {
+  try {
+    return JSON.parse(fs.readFileSync(RENDERER_STATE_FILE, 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+function ensureRenderer(cli, fingerprint) {
+  const state = readRendererState();
+  if (state && state.fingerprint === fingerprint && fs.existsSync(RENDERER_OUTPUT)) {
+    console.log('FORTIS: интерфейс актуален.');
+    return true;
+  }
+  console.log('FORTIS: собираю интерфейс редактора...');
+  const resolvedAssets = path.resolve(RENDERER_ASSETS);
+  const resolvedApp = path.resolve(ROOT, 'app');
+  if (path.dirname(resolvedAssets) !== resolvedApp || path.basename(resolvedAssets) !== 'renderer-assets') {
+    fail('небезопасный путь каталога сборки renderer.');
+    return false;
+  }
+  try {
+    fs.rmSync(resolvedAssets, {recursive: true, force: true});
+  } catch (error) {
+    // Windows may temporarily keep a loaded chunk locked even after the window
+    // disappears. Vite writes content-addressed assets, so a rebuild remains
+    // correct; stale chunks can be removed on the next clean start.
+    console.warn('FORTIS: предыдущие ассеты пока заняты; продолжаю безопасную сборку без их удаления.');
+    console.warn('  ' + error.message);
+  }
+  const result = runNpm(cli, ['run', 'build:renderer'], 'inherit');
+  if (result.error || result.status !== 0 || !fs.existsSync(RENDERER_OUTPUT)) {
+    const reason = result.error ? result.error.message : 'сборка завершилась с кодом ' + result.status + '.';
+    fail('не удалось собрать интерфейс редактора.', [reason, 'Выполните npm run typecheck для подробной диагностики.']);
+    return false;
+  }
+  try {
+    fs.writeFileSync(RENDERER_STATE_FILE, JSON.stringify({fingerprint, builtAt: new Date().toISOString()}, null, 2) + '\n');
+  } catch (error) {
+    console.warn('FORTIS: не удалось записать отметку сборки: ' + error.message);
+  }
+  return true;
+}
+
 function electronModulePath() {
   return require.resolve('electron', { paths: [ROOT] });
 }
@@ -264,6 +338,9 @@ function main() {
   const fingerprint = runtimeFingerprint(packageData, lockData);
   if (!ensureDependencies(cli, fingerprint)) return;
 
+  const rendererHash = rendererFingerprint(packageData, lockData);
+  if (!ensureRenderer(cli, rendererHash)) return;
+
   const binary = ensureElectronBinary();
   if (!binary) return;
 
@@ -281,6 +358,7 @@ module.exports = {
   MINIMUM_NODE,
   binaryLooksUsable,
   parseArguments,
+  rendererFingerprint,
   runtimeFingerprint,
   versionAtLeast
 };

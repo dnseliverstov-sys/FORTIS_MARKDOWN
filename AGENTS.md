@@ -27,7 +27,8 @@ npm start
 1. проверяет версию Node.js;
 2. устанавливает точные зависимости из `package-lock.json`, если это нужно;
 3. скачивает Electron для текущей ОС и архитектуры;
-4. открывает FORTIS Markdown Editor.
+4. при необходимости собирает React renderer из `renderer/`;
+5. открывает FORTIS Markdown Editor.
 
 Первый запуск может занять несколько минут. Следующие запускаются без сети,
 пока зависимости не изменились. Терминал остаётся занят до закрытия приложения.
@@ -75,6 +76,9 @@ curl -s http://127.0.0.1:9333/json/list
 | `typeof window.katex` | `object` |
 | `document.body.innerText` | непустой текст, начинающийся с `FORTIS` |
 
+В списке загруженных ресурсов не должно быть внешних `http://` или `https://`
+адресов: renderer и экспорт работают автономно.
+
 Страница распаковывается несколько секунд. Если текст ещё пустой, подождите и
 повторите запрос.
 
@@ -83,6 +87,19 @@ curl -s http://127.0.0.1:9333/json/list
 ```bash
 npm start -- --prepare-only
 ```
+
+## Проверки миграции renderer
+
+```bash
+npm run typecheck
+npm test
+npm run test:launcher
+npm run test:e2e
+```
+
+Исходники интерфейса находятся в `renderer/`. Файлы `app/index.html` и
+`app/renderer-assets/` генерируются Vite и не коммитятся. `app/main.js` и
+`app/preload.js` остаются исходниками Electron и хранятся в Git.
 
 ## Если не запускается
 

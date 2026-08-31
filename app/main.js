@@ -41,10 +41,136 @@ if (process.platform === 'linux') {
 const fsp = require('node:fs/promises');
 const os = require('node:os');
 const { pathToFileURL } = require('node:url');
+const { randomUUID } = require('node:crypto');
 
 const SCHEME = 'fortis';
 const ORIGIN = `${SCHEME}://app`;
 const RENDERER_DIR = __dirname;
+const documentScopes = new Map();
+const registeredScopeOwners = new Set();
+const e2eRoot = process.env.FORTIS_E2E_ROOT ? path.resolve(process.env.FORTIS_E2E_ROOT) : null;
+if (process.env.FORTIS_E2E_USER_DATA) app.setPath('userData', path.resolve(process.env.FORTIS_E2E_USER_DATA));
+
+function isTrustedRenderer(event) {
+  try {
+    const url = new URL(event.senderFrame.url);
+    return url.protocol === `${SCHEME}:` && url.hostname === 'app' && !url.username && !url.password;
+  } catch { return false; }
+}
+
+function isInside(base, target) {
+  const relative = path.relative(base, target);
+  return relative === '' || (!relative.startsWith('..' + path.sep) && relative !== '..' && !path.isAbsolute(relative));
+}
+
+const resourceMime = new Map([
+  ['.png', 'image/png'], ['.jpg', 'image/jpeg'], ['.jpeg', 'image/jpeg'], ['.gif', 'image/gif'],
+  ['.webp', 'image/webp'], ['.avif', 'image/avif'], ['.bmp', 'image/bmp'], ['.svg', 'image/svg+xml'],
+]);
+const RENDERER_CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'none'; object-src 'none'; frame-src 'none'; base-uri 'none'";
+
+function registerDocumentScope(sender, filePath) {
+  const token = randomUUID();
+  documentScopes.set(token, {owner: sender.id, directory: path.dirname(filePath)});
+  if (!registeredScopeOwners.has(sender.id)) {
+    const owner = sender.id;
+    registeredScopeOwners.add(owner);
+    sender.once('destroyed', () => {
+      for (const [key, scope] of documentScopes) if (scope.owner === owner) documentScopes.delete(key);
+      registeredScopeOwners.delete(owner);
+    });
+  }
+  return token;
+}
+
+async function resolveE2EPath(relative = '') {
+  if (!e2eRoot || typeof relative !== 'string' || relative.includes('\0') || path.isAbsolute(relative)) throw new Error('invalid e2e path');
+  const root = await fsp.realpath(e2eRoot);
+  const target = path.resolve(root, relative);
+  if (!isInside(root, target)) throw new Error('e2e path escaped root');
+  return {root, target};
+}
+
+ipcMain.handle('fortis:register-document', async (event, filePath) => {
+  if (!isTrustedRenderer(event) || typeof filePath !== 'string' || !path.isAbsolute(filePath)) return {ok: false};
+  try {
+    const realFile = await fsp.realpath(filePath);
+    if (!(await fsp.stat(realFile)).isFile()) return {ok: false};
+    const token = registerDocumentScope(event.sender, realFile);
+    return {ok: true, token};
+  } catch {
+    return {ok: false};
+  }
+});
+
+ipcMain.handle('fortis:e2e-list', async (event, relative) => {
+  if (!e2eRoot || !isTrustedRenderer(event)) return [];
+  try {
+    const {target} = await resolveE2EPath(relative);
+    return (await fsp.readdir(target, {withFileTypes: true})).map((entry) => ({name: entry.name, kind: entry.isDirectory() ? 'directory' : 'file'}));
+  } catch { return []; }
+});
+
+ipcMain.handle('fortis:e2e-read', async (event, relative) => {
+  if (!e2eRoot || !isTrustedRenderer(event)) return null;
+  try {
+    const {target} = await resolveE2EPath(relative);
+    const realTarget = await fsp.realpath(target);
+    const {root} = await resolveE2EPath();
+    if (!isInside(root, realTarget)) return null;
+    const stat = await fsp.stat(realTarget);
+    if (!stat.isFile()) return null;
+    return {bytes: (await fsp.readFile(realTarget)).toString('base64'), lastModified: stat.mtimeMs};
+  } catch { return null; }
+});
+
+ipcMain.handle('fortis:e2e-write', async (event, relative, base64) => {
+  if (!e2eRoot || !isTrustedRenderer(event) || typeof base64 !== 'string') return false;
+  try {
+    const {target} = await resolveE2EPath(relative);
+    await fsp.mkdir(path.dirname(target), {recursive: true});
+    await fsp.writeFile(target, Buffer.from(base64, 'base64'));
+    return true;
+  } catch { return false; }
+});
+
+ipcMain.handle('fortis:e2e-register-document', async (event, relative) => {
+  if (!e2eRoot || !isTrustedRenderer(event)) return {ok: false};
+  try {
+    const {root, target} = await resolveE2EPath(relative);
+    const realTarget = await fsp.realpath(target);
+    if (!isInside(root, realTarget) || !(await fsp.stat(realTarget)).isFile()) return {ok: false};
+    return {ok: true, token: registerDocumentScope(event.sender, realTarget)};
+  } catch { return {ok: false}; }
+});
+
+ipcMain.handle('fortis:read-relative-resource', async (event, token, source) => {
+  if (!isTrustedRenderer(event) || typeof token !== 'string' || typeof source !== 'string') return {ok: false};
+  const scope = documentScopes.get(token);
+  if (!scope || scope.owner !== event.sender.id || !source || source.includes('\0')) return {ok: false};
+  const clean = source.split(/[?#]/u, 1)[0];
+  if (!clean || path.isAbsolute(clean) || /^[a-z][a-z0-9+.-]*:/iu.test(clean)) return {ok: false};
+  try {
+    const candidate = await fsp.realpath(path.resolve(scope.directory, decodeURIComponent(clean)));
+    if (!isInside(scope.directory, candidate)) return {ok: false};
+    const extension = path.extname(candidate).toLowerCase();
+    const mime = resourceMime.get(extension);
+    if (!mime) return {ok: false};
+    const stat = await fsp.stat(candidate);
+    if (!stat.isFile() || stat.size > 50 * 1024 * 1024) return {ok: false};
+    let bytes = await fsp.readFile(candidate);
+    if (mime === 'image/svg+xml') {
+      const svg = bytes.toString('utf8')
+        .replace(/<script\b[\s\S]*?<\/script\s*>/giu, '')
+        .replace(/\s+on[a-z]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/giu, '')
+        .replace(/(?:javascript:|data:text\/html)/giu, '');
+      bytes = Buffer.from(svg, 'utf8');
+    }
+    return {ok: true, dataUrl: `data:${mime};base64,${bytes.toString('base64')}`};
+  } catch {
+    return {ok: false};
+  }
+});
 
 // Своя схема вместо file:// — она объявлена standard + secure, поэтому
 // localStorage, IndexedDB и File System Access API работают так же,
@@ -94,7 +220,12 @@ function serveRenderer() {
     } catch {
       return new Response('not found', { status: 404 });
     }
-    return net.fetch(pathToFileURL(file).toString());
+    const response = await net.fetch(pathToFileURL(file).toString());
+    if (!/\.html?$/i.test(rel)) return response;
+    const headers = new Headers(response.headers);
+    headers.set('Content-Security-Policy', RENDERER_CSP);
+    headers.set('X-Content-Type-Options', 'nosniff');
+    return new Response(response.body, {status: response.status, statusText: response.statusText, headers});
   });
 }
 
@@ -103,17 +234,23 @@ function serveRenderer() {
 // Редактор собирает документ для печати в скрытом iframe и зовёт print().
 // В браузере это системный диалог печати; здесь мы сразу отдаём PDF.
 ipcMain.handle('fortis:save-pdf', async (event, html, suggestedName) => {
-  if (typeof html !== 'string' || !html) return { ok: false, fallback: true };
+  if (!isTrustedRenderer(event) || typeof html !== 'string' || !html || html.length > 50 * 1024 * 1024) return { ok: false, fallback: true };
   const parent = BrowserWindow.fromWebContents(event.sender) || BrowserWindow.getFocusedWindow();
   // Имя документа редактор кладёт в <title> собираемой страницы.
   const name = suggestedName || (html.match(/<title>([^<]*)<\/title>/i) || [])[1];
 
-  const { canceled, filePath } = await dialog.showSaveDialog(parent, {
-    title: 'Сохранить PDF',
-    defaultPath: sanitizeName(name) + '.pdf',
-    filters: [{ name: 'PDF', extensions: ['pdf'] }]
-  });
-  if (canceled || !filePath) return { ok: false, canceled: true };
+  let filePath;
+  if (e2eRoot) {
+    filePath = path.join(e2eRoot, sanitizeName(name) + '.pdf');
+  } else {
+    const selected = await dialog.showSaveDialog(parent, {
+      title: 'Сохранить PDF',
+      defaultPath: sanitizeName(name) + '.pdf',
+      filters: [{ name: 'PDF', extensions: ['pdf'] }]
+    });
+    if (selected.canceled || !selected.filePath) return { ok: false, canceled: true };
+    filePath = selected.filePath;
+  }
 
   const tmpDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'fortis-pdf-'));
   const tmpHtml = path.join(tmpDir, 'doc.html');

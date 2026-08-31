@@ -10,6 +10,7 @@ const {
   MINIMUM_NODE,
   binaryLooksUsable,
   parseArguments,
+  rendererFingerprint,
   runtimeFingerprint,
   versionAtLeast
 } = require('./start');
@@ -39,6 +40,12 @@ test('отпечаток зависит от lock-файла, платформы
   assert.notEqual(base, runtimeFingerprint('package', 'lock-a', { platform: 'darwin', arch: 'x64', modules: '137' }));
   assert.notEqual(base, runtimeFingerprint('package', 'lock-a', { platform: 'win32', arch: 'arm64', modules: '137' }));
   assert.notEqual(base, runtimeFingerprint('package', 'lock-a', { platform: 'win32', arch: 'x64', modules: '138' }));
+});
+
+test('отпечаток renderer детерминирован и зависит от package/lock', () => {
+  const base = rendererFingerprint(Buffer.from('package'), Buffer.from('lock-a'));
+  assert.equal(base, rendererFingerprint(Buffer.from('package'), Buffer.from('lock-a')));
+  assert.notEqual(base, rendererFingerprint(Buffer.from('package'), Buffer.from('lock-b')));
 });
 
 test('проверка бинарника отклоняет отсутствующий и слишком короткий файл', (t) => {
