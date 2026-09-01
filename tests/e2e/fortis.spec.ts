@@ -126,8 +126,23 @@ test('opens and saves exact bytes, then preserves exact Markdown edits', async (
   await expect(page.locator('.editor-pane:not([hidden]) .ProseMirror .fortis-alert[data-alert="NOTE"]')).toBeVisible();
   await expect(page.locator('.editor-pane:not([hidden]) .ProseMirror a.fortis-jira')).toContainText('DOCS-42');
   await expect(page.locator('.editor-pane:not([hidden]) .ProseMirror .math-container').first()).toBeVisible();
+  const visualTable = page.locator('.editor-pane:not([hidden]) .ProseMirror table');
+  await expect(visualTable).toBeVisible();
+  await expect(visualTable.locator('span[data-fortis-inline-break] > br')).toHaveCount(1);
+  await expect(visualTable).not.toContainText('<br>');
+  const tableBorders = await visualTable.evaluate((table) => {
+    const cell = table.querySelector('td');
+    return {
+      table: getComputedStyle(table).borderTopStyle,
+      cell: cell ? getComputedStyle(cell).borderRightStyle : '',
+      color: cell ? getComputedStyle(cell).borderRightColor : 'transparent',
+    };
+  });
+  expect(tableBorders).toMatchObject({table: 'solid', cell: 'solid'});
+  expect(tableBorders.color).not.toBe('rgba(0, 0, 0, 0)');
   await expect(page.locator('.file-tab.active')).not.toContainText('●');
   await page.getByRole('button', {name: 'Разметка', exact: true}).click();
+  await expect(page.locator('.editor-pane:not([hidden]) .cm-content')).toContainText('один<br>два');
   await expect(page.locator('.file-tab.active')).not.toContainText('●');
 });
 

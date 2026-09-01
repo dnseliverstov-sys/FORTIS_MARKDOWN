@@ -10,6 +10,7 @@ import type {DocumentTab, EditorAdapter, ViewMode} from '../types';
 import {FortisTableExtension} from '../editor/FortisTableExtension';
 import {FortisAlertExtension} from '../editor/FortisAlertExtension';
 import {FortisJiraExtension} from '../editor/FortisJiraExtension';
+import {FortisInlineHtmlExtension} from '../editor/FortisInlineHtmlExtension';
 import {
   getGravitySelectionMarkdown,
   getGravityProseMirrorView,
@@ -82,6 +83,7 @@ export function EditorPane({tab, viewMode, jiraBase, theme, active, toolbarVisib
         builder.use(FortisAlertExtension);
         builder.use(FortisJiraExtension, {getBaseUrl: () => jiraBaseRef.current});
         builder.use(FortisTableExtension);
+        builder.use(FortisInlineHtmlExtension);
       },
     },
   }, [tab.id]);
