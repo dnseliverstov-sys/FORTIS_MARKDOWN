@@ -6,6 +6,7 @@ import katex from 'katex';
 import type {AssetResolver, MarkdownAnalysis, MarkdownHeading, MarkdownLink} from '../types';
 import {ALERT_TYPES, PORTABLE_MARKDOWN_POLICY} from './policy';
 import {SELF_CONTAINED_KATEX_CSS} from './katexExport';
+import {headingLines} from './navigation';
 
 const ALERTS = new Set<string>(ALERT_TYPES);
 
@@ -16,14 +17,6 @@ const plugins = [
 
 function decodeDataContent(value: string): string {
   try { return decodeURIComponent(value); } catch { return value; }
-}
-
-function flattenHeadings(items: Array<{title?: string; href?: string; level?: number; items?: unknown[]}>, result: MarkdownHeading[] = []): MarkdownHeading[] {
-  for (const item of items || []) {
-    result.push({title: item.title || '', href: item.href || '', level: item.level || 1});
-    if (Array.isArray(item.items)) flattenHeadings(item.items as typeof items, result);
-  }
-  return result;
 }
 
 function decorateAlerts(root: ParentNode): void {
@@ -97,6 +90,7 @@ function safeTableStyle(value: string): string {
     const property = rawValue.join(':').trim().toLowerCase();
     if (name === 'text-align' && /^(left|center|right)$/u.test(property)) result.push(`${name}:${property}`);
     if (name === 'width' && /^(?:auto|\d+(?:\.\d+)?(?:px|%|em|rem|pt|mm|cm|in)?)$/u.test(property)) result.push(`${name}:${property}`);
+    if ((name === 'background-color' || name === 'color') && /^(?:#[0-9a-f]{3,8}|rgba?\(\s*\d{1,3}\s*,\s*\d{1,3}\s*,\s*\d{1,3}(?:\s*,\s*(?:0|1|0?\.\d+))?\s*\))$/u.test(property)) result.push(`${name}:${property}`);
   }
   return result.join(';');
 }
@@ -179,14 +173,18 @@ export function renderMarkdown(markdown: string, jiraBase = ''): MarkdownAnalysi
   let clean = sanitizeRenderedHtml(template.innerHTML);
   const cleanTemplate = document.createElement('template');
   cleanTemplate.innerHTML = clean;
-  let headings = flattenHeadings(output.result.headings || []);
-  if (!headings.length) {
-    headings = Array.from(cleanTemplate.content.querySelectorAll<HTMLElement>('h1,h2,h3,h4,h5,h6')).map((heading, index) => {
-      if (!heading.id) heading.id = `h-${(heading.textContent || 'section').toLocaleLowerCase('ru').replace(/[^a-zа-яё0-9]+/giu, '-').replace(/^-|-$/g, '') || index + 1}`;
-      return {level: Number(heading.tagName.slice(1)), title: heading.textContent || '', href: `#${heading.id}`};
-    });
-    clean = cleanTemplate.innerHTML;
-  }
+  const sourceLines = headingLines(markdown);
+  const usedIds = new Set<string>();
+  const headings: MarkdownHeading[] = Array.from(cleanTemplate.content.querySelectorAll<HTMLElement>('h1,h2,h3,h4,h5,h6')).map((heading, index) => {
+    const base = heading.id || `h-${(heading.textContent || 'section').toLocaleLowerCase('ru').replace(/[^a-zа-яё0-9]+/giu, '-').replace(/^-|-$/g, '') || index + 1}`;
+    let id = base;
+    let suffix = 2;
+    while (usedIds.has(id)) id = `${base}-${suffix++}`;
+    usedIds.add(id);
+    heading.id = id;
+    return {level: Number(heading.tagName.slice(1)), title: heading.textContent || '', href: `#${id}`, line: sourceLines[index], headingIndex: index};
+  });
+  clean = cleanTemplate.innerHTML;
   const links: MarkdownLink[] = Array.from(cleanTemplate.content.querySelectorAll<HTMLAnchorElement>('a[href]')).map((link) => ({
     label: link.textContent || link.getAttribute('href') || '',
     href: link.getAttribute('href') || '',

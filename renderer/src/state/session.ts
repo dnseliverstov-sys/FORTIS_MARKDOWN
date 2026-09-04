@@ -66,7 +66,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   menuVisible: true,
   toolbarVisible: true,
   treeVisible: true,
-  docPanelVisible: true,
+  docPanelVisible: false,
+  panelLayoutVersion: 1,
   docPanel: 'toc',
   spellcheck: false,
   jiraBase: 'https://jira.company.local',
@@ -88,6 +89,7 @@ export function createTab(name = 'Без имени.md', markdown = '', dirty = 
     dirty,
     touched: dirty,
     revision: 0,
+    isDraft: dirty,
   };
 }
 
@@ -105,6 +107,7 @@ function legacyTab(value: Record<string, unknown>, index: number): DocumentTab {
     savedAt: typeof value.savedAt === 'number' ? value.savedAt : undefined,
     handleKey: typeof value.handleKey === 'string' ? value.handleKey : undefined,
     revision: 0,
+    isDraft: dirty && !value.handleKey && !value.savedAt && !value.savedMarkdown,
   };
 }
 
@@ -164,17 +167,20 @@ export function migrateSession(input: unknown): FortisSession {
         dirty: Boolean(tab.dirty),
         touched: Boolean(tab.touched),
         revision: Number(tab.revision) || 0,
+        isDraft: typeof tab.isDraft === 'boolean' ? tab.isDraft : Boolean(tab.dirty && !tab.handleKey && !tab.savedAt && !tab.savedMarkdown),
       };
     });
     const settings = {...DEFAULT_SETTINGS, ...(raw.settings as Partial<AppSettings>)};
+    if ((raw.settings as Partial<AppSettings>).panelLayoutVersion !== 1) settings.docPanelVisible = false;
+    settings.panelLayoutVersion = 1;
     settings.shortcuts = {...DEFAULT_SHORTCUTS, ...migrateCommandIds(settings.shortcuts, (entry) => typeof entry === 'string' ? entry : undefined)};
     settings.toolbarCommands = migrateToolbarIds(settings.toolbarCommands);
     settings.syncScroll = settings.syncScroll !== false;
     settings.zoom = Math.max(0.5, Math.min(2, Number(settings.zoom) || 1));
     return {
       version: 2,
-      tabs: tabs.length ? tabs : [createTab('Руководство.md', DEMO_MARKDOWN)],
-      activeId: typeof raw.activeId === 'string' ? raw.activeId : tabs[0]?.id || null,
+      tabs,
+      activeId: tabs.some((tab) => tab.id === raw.activeId) ? raw.activeId as string : tabs[0]?.id || null,
       settings,
       recent: Array.isArray(raw.recent) ? raw.recent as FortisSession['recent'] : [],
       bookmarks: Array.isArray(raw.bookmarks) ? raw.bookmarks as FortisSession['bookmarks'] : [],
@@ -196,7 +202,7 @@ export function migrateSession(input: unknown): FortisSession {
       menuVisible: raw.menuVisible !== false,
       toolbarVisible: raw.toolbarVisible !== false,
       treeVisible: raw.treeVisible !== false,
-      docPanelVisible: raw.docPanelVisible !== false,
+      docPanelVisible: false,
       spellcheck: Boolean(raw.spell),
       jiraBase: typeof raw.jiraBase === 'string' ? raw.jiraBase : DEFAULT_SETTINGS.jiraBase,
       bitbucketBase: typeof raw.bbBase === 'string' ? raw.bbBase : DEFAULT_SETTINGS.bitbucketBase,
@@ -225,9 +231,10 @@ export function persistSession(session: FortisSession): void {
 }
 
 export function applyUserDocumentChange(tab: DocumentTab, markdown: string): DocumentTab {
+  if (tab.markdown === markdown) return tab;
   return {...tab, markdown, touched: true, dirty: markdown !== tab.savedMarkdown};
 }
 
 export function markDocumentSaved(tab: DocumentTab, savedAt = Date.now()): DocumentTab {
-  return {...tab, savedMarkdown: tab.markdown, dirty: false, touched: false, savedAt};
+  return {...tab, savedMarkdown: tab.markdown, dirty: false, touched: false, isDraft: false, savedAt};
 }

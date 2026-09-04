@@ -2,6 +2,8 @@ import {describe, expect, it, vi} from 'vitest';
 import type {MarkdownEditorInstance} from '@gravity-ui/markdown-editor';
 import {getGravitySelectionMarkdown, setGravityViewMode} from './gravityBridge';
 
+vi.mock('@gravity-ui/markdown-editor/_/extensions/behavior/Search/commands.js', () => ({openSearch: vi.fn(), closeSearch: vi.fn()}));
+
 describe('Gravity editor bridge', () => {
   it('returns the exact CodeMirror selection', () => {
     const editor = {

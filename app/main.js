@@ -374,7 +374,11 @@ const UNSAVED = `(() => {
 
 async function confirmClose(win, close) {
   writeWindowState(win);
-  if (!(await ask(win, UNSAVED))) { close(); return; }
+  const finish = async (discard = false) => {
+    const ready = await ask(win, `window.__fortisPrepareClose ? window.__fortisPrepareClose(${discard}) : false`);
+    if (ready === true && !win.isDestroyed()) close();
+  };
+  if (!(await ask(win, UNSAVED))) { await finish(); return; }
 
   const { response } = await dialog.showMessageBox(win, {
     type: 'warning',
@@ -385,7 +389,7 @@ async function confirmClose(win, close) {
     detail: 'Сохранить их перед закрытием?'
   });
   if (response === 2) return;              // отмена — окно остаётся открытым
-  if (response === 1) { close(); return; } // закрыть, ничего не сохраняя
+  if (response === 1) { await finish(true); return; }
 
   const stillDirty = await ask(win, 'window.__fortisSaveAll ? window.__fortisSaveAll() : true');
   if (win.isDestroyed()) return;
@@ -394,7 +398,7 @@ async function confirmClose(win, close) {
     // пропадёт. Пользователь сохранит вручную и закроет ещё раз.
     return;
   }
-  close();
+  await finish();
 }
 
 /* ---------- окно ---------- */

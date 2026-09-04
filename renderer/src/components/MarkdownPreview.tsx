@@ -7,11 +7,15 @@ interface Props {
   jiraBase: string;
   theme: 'light' | 'dark';
   className?: string;
+  onRendered?(): void;
 }
 
-export function MarkdownPreview({markdown, jiraBase, theme, className = ''}: Props) {
+export function MarkdownPreview({markdown, jiraBase, theme, className = '', onRendered}: Props) {
   const [html, setHtml] = useState('');
   const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    if (!loading && html) onRendered?.();
+  }, [html, loading, onRendered]);
 
   useEffect(() => {
     let canceled = false;

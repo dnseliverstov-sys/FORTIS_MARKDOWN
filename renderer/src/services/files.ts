@@ -38,7 +38,12 @@ export async function getHandle<T extends FileSystemHandle = FileSystemHandle>(k
     const db = await database();
     return await new Promise<T | null>((resolve) => {
       const request = db.transaction(STORE_NAME, 'readonly').objectStore(STORE_NAME).get(key);
-      request.onsuccess = () => resolve((request.result as T) || null);
+      request.onsuccess = () => {
+        const handle = request.result;
+        const valid = handle?.kind === 'file' ? typeof handle.getFile === 'function'
+          : handle?.kind === 'directory' && typeof handle.entries === 'function';
+        resolve(valid ? handle as T : null);
+      };
       request.onerror = () => resolve(null);
     });
   } catch {

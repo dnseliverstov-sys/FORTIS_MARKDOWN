@@ -1,7 +1,12 @@
 import {describe, expect, it, vi} from 'vitest';
-import {CommandRegistry, normalizeKeyboardCombo, shortcutConflicts} from './commands';
+import {CommandRegistry, keyboardCombo, normalizeKeyboardCombo, shortcutConflicts} from './commands';
 
 describe('CommandRegistry', () => {
+  it('recognizes find in Russian layout and with Command on macOS', () => {
+    expect(keyboardCombo(new KeyboardEvent('keydown', {key: 'а', code: 'KeyF', ctrlKey: true}))).toBe('Ctrl+F');
+    expect(keyboardCombo(new KeyboardEvent('keydown', {key: 'f', code: 'KeyF', metaKey: true}))).toBe('Ctrl+F');
+    expect(keyboardCombo(new KeyboardEvent('keydown', {key: 'а', code: 'KeyF'}))).toBe('А');
+  });
   it('executes only enabled commands and replaces stale definitions', async () => {
     const run = vi.fn();
     const registry = new CommandRegistry();

@@ -2,6 +2,15 @@ import {describe, expect, it} from 'vitest';
 import {applyUserDocumentChange, createTab, markDocumentSaved, migrateSession} from './session';
 
 describe('session migration', () => {
+  it('hides the document panel once and then remembers the user choice', () => {
+    const first = migrateSession({version: 2, tabs: [], settings: {theme: 'paper', docPanelVisible: true}});
+    expect(first.settings.docPanelVisible).toBe(false);
+    expect(first.settings.theme).toBe('paper');
+    first.settings.docPanelVisible = true;
+    expect(migrateSession(first).settings.docPanelVisible).toBe(true);
+    expect(migrateSession(null).settings.docPanelVisible).toBe(false);
+    expect(migrateSession(first).tabs).toEqual([]);
+  });
   it('converts legacy split mode to markup with preview while retaining settings', () => {
     const session = migrateSession({
       tabs: [{id: 7, name: 'legacy.md', md: '# Старый файл\r\n', dirty: true}],

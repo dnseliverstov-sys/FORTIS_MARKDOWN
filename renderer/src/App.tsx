@@ -1,5 +1,6 @@
-import {useCallback, useEffect, useMemo, useRef, useState} from 'react';
-import {Button, SegmentedRadioGroup, TextInput, ThemeProvider} from '@gravity-ui/uikit';
+import {useCallback, useEffect, useMemo, useRef, useState, type SetStateAction} from 'react';
+import {Button, Icon, SegmentedRadioGroup, TextInput, ThemeProvider} from '@gravity-ui/uikit';
+import {File, FolderOpen, LayoutSideContent, LayoutSideContentRight, Palette} from '@gravity-ui/icons';
 import {EditorPane} from './components/EditorPane';
 import {WorkspaceTree} from './components/WorkspaceTree';
 import {DocumentPanel} from './components/DocumentPanel';
@@ -7,9 +8,13 @@ import {Modal} from './components/Modal';
 import {TableLab} from './components/TableLab';
 import {FormulaPanel, type FormulaEdit} from './components/FormulaPanel';
 import {CommandMenu} from './components/CommandMenu';
+import {MarkdownPreview} from './components/MarkdownPreview';
 import type {GravityFormulaTarget} from './editor/gravityBridge';
+import type {MarkdownInsertion} from './editor/gravityBridge';
 import {buildExportHtml, markdownToPlainText, renderMarkdown} from './markdown/pipeline';
-import {docxToMarkdown, htmlToMarkdown, type ImportResult} from './markdown/importers';
+import {
+  analyzeHtmlImport, docxToMarkdown, type HtmlImportAnalysis, type HtmlTableImportMode, type ImportResult,
+} from './markdown/importers';
 import {
   download, getHandle, inputFile, pickMarkdownFile, pickSaveHandle, pickWorkspace,
   payloadForSave, putHandle, readHandle, walkDirectory, writeHandle,
@@ -18,6 +23,7 @@ import {CommandRegistry, installCommandShortcuts, keyboardCombo, shortcutConflic
 import {
   AUTOSAVE_KEY, createTab, DEFAULT_SHORTCUTS, DEFAULT_TOOLBAR_COMMANDS, EXIT_KEY, loadSession, persistSession,
 } from './state/session';
+import {discardChanges, persistRecovery, readCrashRecovery, resolveRecovery} from './state/recovery';
 import {DOCUMENT_TEMPLATES, markdownToJiraDescription} from './services/templates';
 import {applyTheme, THEMES} from './state/themes';
 import {diffCount, diffLines} from './utils/diff';
@@ -28,8 +34,12 @@ import type {
 
 type Dialog = null | 'themes' | 'export' | 'import' | 'settings' | 'diff' | 'recent' | 'shortcuts' | 'table' | 'templates' | 'jiraDescription' | 'toolbar';
 
-interface ImportPreview extends ImportResult {name: string}
-interface Recovery {ts: number; tabs: Array<{name: string; md: string}>}
+interface ImportPreview {
+  name: string;
+  destination: {kind: 'document'} | {kind: 'insert'; tabId: string; insert: MarkdownInsertion};
+  analysis?: HtmlImportAnalysis;
+  result?: ImportResult;
+}
 interface Conflict {id: string; name: string; disk: string; bytes: Uint8Array; lastModified: number; added: number; removed: number}
 
 const WORKSPACE_HANDLE_KEY = 'fortis.workspace';
@@ -96,17 +106,26 @@ function runtimeFor(runtimes: Map<string, DocumentRuntime>, id: string): Documen
 }
 
 export default function App() {
-  const [session, setSession] = useState<FortisSession>(() => loadSession());
+  const [session, setSessionState] = useState<FortisSession>(() => loadSession());
   const sessionRef = useRef(session);
+  const setSession = useCallback((update: SetStateAction<FortisSession>) => {
+    const next = typeof update === 'function' ? update(sessionRef.current) : update;
+    sessionRef.current = next;
+    setSessionState(next);
+  }, []);
   const [workspace, setWorkspace] = useState<WorkspaceNode | null>(null);
   const [dialog, setDialog] = useState<Dialog>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [findOpen, setFindOpen] = useState(false);
   const [findQuery, setFindQuery] = useState('');
-  const [replaceQuery, setReplaceQuery] = useState('');
   const [workspaceHits, setWorkspaceHits] = useState<Array<{node: WorkspaceNode; line: number; text: string}>>([]);
   const [importPreview, setImportPreview] = useState<ImportPreview | null>(null);
-  const [recovery, setRecovery] = useState<Recovery | null>(null);
+  const [importMode, setImportMode] = useState<HtmlTableImportMode>('exact');
+  const [importView, setImportView] = useState<'rendered' | 'markdown'>('rendered');
+  const [recovery, setRecovery] = useState(readCrashRecovery);
+  const recoveryRef = useRef(recovery);
+  recoveryRef.current = recovery;
+  const closingRef = useRef(false);
   const [conflict, setConflict] = useState<Conflict | null>(null);
   const [closeCandidate, setCloseCandidate] = useState<DocumentTab | null>(null);
   const [exportFormat, setExportFormat] = useState<'html' | 'pdf' | 'txt'>('html');
@@ -124,7 +143,6 @@ export default function App() {
   const toastTimer = useRef<number | null>(null);
   const commandRegistry = useMemo(() => new CommandRegistry(), []);
 
-  useEffect(() => { sessionRef.current = session; }, [session]);
   const activeTab = session.tabs.find((tab) => tab.id === session.activeId) || null;
   const theme = THEMES.find((item) => item.id === session.settings.theme) || THEMES[0];
 
@@ -255,7 +273,7 @@ export default function App() {
       const handleKey = handle ? `${name}|h` : tab.handleKey;
       if (handle && handleKey) void putHandle(handleKey, handle);
       patchTab(id, {
-        name, handleKey, savedMarkdown: tab.markdown, dirty: false, touched: false,
+        name, handleKey, savedMarkdown: tab.markdown, dirty: false, touched: false, isDraft: false,
         savedAt: Date.now(), revision: tab.revision,
       });
       if (handleKey) setSession((current) => ({
@@ -357,18 +375,6 @@ export default function App() {
     adapters.current.get(sessionRef.current.activeId)?.insertMarkdown(markdown);
   }, []);
 
-  const applyFindReplace = useCallback((all: boolean) => {
-    const tab = sessionRef.current.tabs.find((item) => item.id === sessionRef.current.activeId);
-    if (!tab || !findQuery) return;
-    const index = tab.markdown.indexOf(findQuery);
-    if (index < 0) { notify('Совпадений не найдено.'); return; }
-    const markdown = all
-      ? tab.markdown.split(findQuery).join(replaceQuery)
-      : tab.markdown.slice(0, index) + replaceQuery + tab.markdown.slice(index + findQuery.length);
-    replaceTabMarkdown(tab.id, markdown);
-    notify(all ? 'Все совпадения заменены.' : 'Совпадение заменено.');
-  }, [findQuery, notify, replaceQuery, replaceTabMarkdown]);
-
   const searchWorkspace = useCallback(async () => {
     if (!workspace || !findQuery) return;
     const files: WorkspaceNode[] = [];
@@ -392,17 +398,61 @@ export default function App() {
     if (!file) return;
     try {
       const extension = file.name.split('.').pop()?.toLowerCase();
-      const result = extension === 'docx'
-        ? await docxToMarkdown(await file.arrayBuffer())
-        : extension === 'html' || extension === 'htm'
-          ? htmlToMarkdown(await file.text())
-          : {markdown: await file.text(), losses: []};
-      setImportPreview({...result, name: file.name.replace(/\.(docx|html?|txt)$/i, '.md')});
+      const name = file.name.replace(/\.(docx|html?|txt)$/i, '.md');
+      const preview: ImportPreview = extension === 'html' || extension === 'htm'
+        ? {name, destination: {kind: 'document'}, analysis: analyzeHtmlImport(await file.text())}
+        : {
+          name, destination: {kind: 'document'},
+          result: extension === 'docx' ? await docxToMarkdown(await file.arrayBuffer()) : {markdown: await file.text(), losses: []},
+        };
+      setImportMode('exact');
+      setImportView('rendered');
+      setImportPreview(preview);
       setDialog('import');
     } catch (error) {
       notify(`Не удалось импортировать: ${errorText(error)}`);
     }
   }, [notify]);
+
+  const importHtmlTableFromPaste = useCallback((tabId: string, html: string, insertAtSelection: MarkdownInsertion): boolean => {
+    try {
+      const analysis = analyzeHtmlImport(html);
+      if (!analysis.hasTables) return false;
+      setImportMode('exact');
+      setImportView('rendered');
+      setImportPreview({name: 'Фрагмент Confluence.md', destination: {kind: 'insert', tabId, insert: insertAtSelection}, analysis});
+      setDialog('import');
+      return true;
+    } catch {
+      return false;
+    }
+  }, []);
+
+  const closeImport = useCallback(() => {
+    setDialog(null);
+    setImportPreview(null);
+    setImportMode('exact');
+    setImportView('rendered');
+  }, []);
+
+  const applyImport = useCallback(() => {
+    if (!importPreview) return;
+    const result = importPreview.analysis?.variants[importMode] || importPreview.result;
+    if (!result) return;
+    if (importPreview.destination.kind === 'document') {
+      addDocument(importPreview.name, result.markdown, {dirty: true});
+      closeImport();
+      return;
+    }
+    const markdown = `\n\n${result.markdown.trim()}\n\n`;
+    if (!importPreview.destination.insert(markdown)) {
+      notify('Документ изменился во время предпросмотра — повторите вставку.');
+      closeImport();
+      return;
+    }
+    closeImport();
+    notify(importPreview.analysis?.confluence ? 'Таблица Confluence вставлена.' : 'HTML-таблица вставлена.');
+  }, [addDocument, closeImport, importMode, importPreview, notify]);
 
   const openNewFormula = useCallback(() => {
     const id = sessionRef.current.activeId;
@@ -493,33 +543,35 @@ export default function App() {
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
-      try { persistSession(cloneForStorage(session)); } catch { /* localStorage quota */ }
+      if (recoveryRef.current || closingRef.current) return;
+      try { persistSession(cloneForStorage(sessionRef.current)); } catch { /* localStorage quota */ }
     }, 400);
     return () => window.clearTimeout(timer);
   }, [session]);
 
   useEffect(() => {
-    let previousClean = true;
-    try {
-      previousClean = localStorage.getItem(EXIT_KEY) === 'ok';
-      const autosave = JSON.parse(localStorage.getItem(AUTOSAVE_KEY) || 'null') as Recovery | null;
-      if (!previousClean && autosave?.tabs?.length) setRecovery(autosave);
-      localStorage.setItem(EXIT_KEY, 'no');
-    } catch { /* storage unavailable */ }
-    const markClean = () => { try { localStorage.setItem(EXIT_KEY, 'ok'); } catch { /* ignore */ } };
-    window.addEventListener('pagehide', markClean);
-    return () => window.removeEventListener('pagehide', markClean);
+    try { localStorage.setItem(EXIT_KEY, 'no'); } catch { /* storage unavailable */ }
+    const flush = () => {
+      if (recoveryRef.current || closingRef.current) return;
+      try {
+        persistSession(sessionRef.current);
+        persistRecovery(sessionRef.current);
+        localStorage.setItem(EXIT_KEY, sessionRef.current.tabs.some((tab) => tab.dirty) ? 'no' : 'ok');
+      } catch { /* Keep the crash marker when the write fails. */ }
+    };
+    window.addEventListener('pagehide', flush);
+    return () => window.removeEventListener('pagehide', flush);
   }, []);
 
   useEffect(() => {
     const autosave = window.setInterval(() => {
+      if (recoveryRef.current || closingRef.current) return;
       try {
-        const dirty = sessionRef.current.tabs.filter((tab) => tab.dirty);
-        if (!dirty.length) localStorage.removeItem(AUTOSAVE_KEY);
-        else localStorage.setItem(AUTOSAVE_KEY, JSON.stringify({ts: Date.now(), tabs: dirty.map((tab) => ({name: tab.name, md: tab.markdown}))}));
+        persistRecovery(sessionRef.current);
       } catch { /* quota */ }
     }, 2500);
     const snapshots = window.setInterval(() => {
+      if (recoveryRef.current || closingRef.current) return;
       for (const tab of sessionRef.current.tabs.filter((item) => item.dirty)) snapshot(tab.id, 'автосохранение', tab.markdown);
     }, 180_000);
     return () => { window.clearInterval(autosave); window.clearInterval(snapshots); };
@@ -555,6 +607,22 @@ export default function App() {
     const controller = new AbortController();
     window.__fortisUnsaved = () => sessionRef.current.tabs.some((tab) => tab.dirty);
     window.__fortisSaveAll = saveAll;
+    window.__fortisPrepareClose = (discard) => {
+      if (recoveryRef.current) return false;
+      const next = discard ? discardChanges(sessionRef.current) : sessionRef.current;
+      if (next.tabs.some((tab) => tab.dirty)) return false;
+      try {
+        persistSession(next);
+        localStorage.removeItem(AUTOSAVE_KEY);
+        localStorage.setItem(EXIT_KEY, 'ok');
+        closingRef.current = true;
+        setSession(next);
+        return true;
+      } catch {
+        notify('Не удалось сохранить состояние перед закрытием. Повторите попытку.');
+        return false;
+      }
+    };
     window.addEventListener('beforeunload', (event) => {
       if (!sessionRef.current.tabs.some((tab) => tab.dirty)) return;
       event.preventDefault();
@@ -574,8 +642,27 @@ export default function App() {
       controller.abort();
       delete window.__fortisUnsaved;
       delete window.__fortisSaveAll;
+      delete window.__fortisPrepareClose;
     };
-  }, [addDocument, saveAll]);
+  }, [addDocument, notify, saveAll, setSession]);
+
+  const finishRecovery = (restore: boolean) => {
+    const pending = recoveryRef.current;
+    if (!pending) return;
+    const next = resolveRecovery(sessionRef.current, pending, restore);
+    try {
+      persistSession(next);
+      localStorage.removeItem(AUTOSAVE_KEY);
+      if (restore) persistRecovery(next);
+    } catch {
+      notify('Не удалось сохранить решение о восстановлении. Повторите попытку.');
+      return;
+    }
+    recoveryRef.current = null;
+    setSession(next);
+    setRecovery(null);
+    if (restore) notify('Черновики восстановлены.');
+  };
 
   useEffect(() => {
     const open = (event: Event) => {
@@ -613,8 +700,8 @@ export default function App() {
     {id: 'bold', label: 'Полужирный', group: 'Правка', enabled: () => Boolean(activeTab), run: () => {if (activeTab) adapters.current.get(activeTab.id)?.execute('bold');}},
     {id: 'italic', label: 'Курсив', group: 'Правка', enabled: () => Boolean(activeTab), run: () => {if (activeTab) adapters.current.get(activeTab.id)?.execute('italic');}},
     {id: 'strike', label: 'Зачёркнутый', group: 'Правка', enabled: () => Boolean(activeTab), run: () => {if (activeTab) adapters.current.get(activeTab.id)?.execute('strike');}},
-    {id: 'find', label: 'Найти и заменить', group: 'Правка', allowInsideEditor: true, run: () => setFindOpen(true)},
-    {id: 'workspaceFind', label: 'Поиск в папке', group: 'Правка', run: () => {setFindOpen(true); void searchWorkspace();}},
+    {id: 'find', label: 'Найти и заменить', group: 'Правка', enabled: () => Boolean(activeTab), allowInsideEditor: true, run: () => {if (activeTab) adapters.current.get(activeTab.id)?.openSearch();}},
+    {id: 'workspaceFind', label: 'Поиск в папке', group: 'Правка', allowInsideEditor: true, run: () => {setFindOpen(true); void searchWorkspace();}},
     {id: 'diff', label: 'Сравнить версии…', group: 'Правка', enabled: () => Boolean(activeTab), run: openDiff},
     {id: 'snapshot', label: 'Создать снимок', group: 'Правка', enabled: () => Boolean(activeTab), run: () => {if (activeTab) snapshot(activeTab.id, 'снимок вручную');}},
     {id: 'source', label: 'Исходный текст', group: 'Вид', run: () => setViewMode(session.settings.viewMode === 'markup' ? 'wysiwyg' : 'markup')},
@@ -643,7 +730,9 @@ export default function App() {
     const controller = new AbortController();
     installCommandShortcuts(commandRegistry, () => sessionRef.current.settings.shortcuts, controller.signal);
     window.addEventListener('keydown', (event) => {
-      if (event.key === 'Escape') {setDialog(null); setFindOpen(false);}
+      if (event.key === 'Escape') {
+        setDialog(null); setImportPreview(null); setImportMode('exact'); setImportView('rendered'); setFindOpen(false);
+      }
     }, {signal: controller.signal, capture: true});
     return () => controller.abort();
   }, [commandRegistry]);
@@ -656,6 +745,8 @@ export default function App() {
   const diffMarkdown = diffTarget === 'saved' ? activeTab?.savedMarkdown || ''
     : diffTarget === 'disk' ? diffDisk || ''
       : session.tabs.find((tab) => tab.id === diffTarget)?.markdown || '';
+  const activeImport = importPreview?.analysis?.variants[importMode] || importPreview?.result || null;
+  const importIssues = importPreview?.analysis?.variants[importMode].issues || [];
 
   return (
     <ThemeProvider theme={theme.gravity} lang="ru" rootClassName="fortis-theme-root">
@@ -664,6 +755,9 @@ export default function App() {
         <div className="brand"><strong>FORTIS</strong><span className="brand-mark" aria-hidden="true" /><span>MARKDOWN EDITOR</span></div>
         {session.settings.menuVisible ? <CommandMenu registry={commandRegistry} shortcuts={session.settings.shortcuts} /> : null}
         <div className="top-actions">
+          <button type="button" title="Дерево рабочего пространства" aria-label="Дерево рабочего пространства" aria-pressed={session.settings.treeVisible} onClick={() => void commandRegistry.execute('tree')}><Icon data={LayoutSideContent} size={18} /></button>
+          <button type="button" title="Панель документа" aria-label="Панель документа" aria-pressed={session.settings.docPanelVisible} onClick={() => void commandRegistry.execute('docPanel')}><Icon data={LayoutSideContentRight} size={18} /></button>
+          <button type="button" title="Выбрать тему оформления" onClick={() => void commandRegistry.execute('themes')}><Icon data={Palette} size={18} /><span>Тема</span></button>
           <button type="button" title="Недавние и закладки" onClick={() => void commandRegistry.execute('recent')}>★</button>
           <button type="button" title="Настройки Jira/Bitbucket" onClick={() => void commandRegistry.execute('settings')}>⚙</button>
           <button type="button" title="Скрыть меню" onClick={() => void commandRegistry.execute('toggleMenu')}>☰</button>
@@ -675,10 +769,11 @@ export default function App() {
           type="button"
           className={index > 0 && toolbarCommands[index - 1].group !== command.group ? 'toolbar-new-group' : undefined}
           key={command.id}
+          aria-label={command.label}
           title={`${command.label}${session.settings.shortcuts[command.id] ? ` (${session.settings.shortcuts[command.id]})` : ''}`}
           disabled={!commandRegistry.isEnabled(command.id)}
           onClick={() => void commandRegistry.execute(command.id)}
-        >{TOOLBAR_ICONS[command.id] || '•'}<small>{command.label.replace(/[…\.]+$/u, '').split(' ')[0]}</small></button>)}
+        >{command.id === 'open' ? <Icon data={File} size={21} /> : command.id === 'openWorkspace' ? <Icon data={FolderOpen} size={21} /> : TOOLBAR_ICONS[command.id] || '•'}<small>{command.id === 'open' ? 'Файл' : command.id === 'openWorkspace' ? 'Папка' : command.label.replace(/[…\.]+$/u, '').split(' ')[0]}</small></button>)}
         <button type="button" className="toolbar-new-group" title="Настроить панель" onClick={() => void commandRegistry.execute('toolbar')}>☷<small>Настроить</small></button>
       </div> : null}
 
@@ -692,18 +787,16 @@ export default function App() {
       </div>
 
       {findOpen ? <div className="findbar">
-        <TextInput autoFocus size="s" placeholder="Найти" value={findQuery} onUpdate={setFindQuery} />
-        <TextInput size="s" placeholder="Заменить" value={replaceQuery} onUpdate={setReplaceQuery} />
-        <Button size="s" onClick={() => applyFindReplace(false)}>Заменить</Button>
-        <Button size="s" onClick={() => applyFindReplace(true)}>Заменить всё</Button>
+        <span>Поиск в папке</span>
+        <TextInput autoFocus size="s" placeholder="Найти" value={findQuery} onUpdate={setFindQuery} onKeyDown={(event) => {if (event.key === 'Enter') void searchWorkspace();}} />
         <Button size="s" onClick={() => void searchWorkspace()}>В папке</Button>
-        <button type="button" className="icon-button" onClick={() => {setFindOpen(false); setWorkspaceHits([]);}}>×</button>
+        <button type="button" aria-label="Закрыть поиск в папке" className="icon-button" onClick={() => {setFindOpen(false); setWorkspaceHits([]);}}>×</button>
       </div> : null}
 
       <main className="workspace">
-        {session.settings.treeVisible ? <div className="left-pane" style={{width: session.settings.treeWidth}}><WorkspaceTree root={workspace} onOpen={(node) => void openWorkspaceNode(node)} />
+        <div className="left-pane" hidden={!session.settings.treeVisible} style={{width: session.settings.treeWidth}}><WorkspaceTree root={workspace} onClose={() => void commandRegistry.execute('tree')} onOpen={(node) => void openWorkspaceNode(node)} />
           {workspaceHits.length ? <div className="workspace-hits"><div className="panel-title">РЕЗУЛЬТАТЫ</div>{workspaceHits.map((hit, index) => <button key={`${hit.node.key}-${hit.line}-${index}`} onClick={() => void openWorkspaceNode(hit.node, hit.line)}><strong>{hit.node.name}:{hit.line + 1}</strong><span>{hit.text}</span></button>)}</div> : null}
-        </div> : null}
+        </div>
         <section className="editor-area">
           {session.tabs.map((tab) => <EditorPane
             key={tab.id}
@@ -717,6 +810,7 @@ export default function App() {
             syncScroll={session.settings.syncScroll}
             onChange={markUserChange}
             onReady={(id, adapter) => {if (adapter) adapters.current.set(id, adapter); else adapters.current.delete(id);}}
+            onHtmlTablePaste={importHtmlTableFromPaste}
           />)}
           {!activeTab ? <div className="empty-editor"><span>F</span><h1>FORTIS</h1><p>Создайте документ или откройте Markdown-файл.</p></div> : null}
         </section>
@@ -725,9 +819,10 @@ export default function App() {
           panel={session.settings.docPanel}
           jiraBase={session.settings.jiraBase}
           versions={activeVersions}
+          onClose={() => void commandRegistry.execute('docPanel')}
           onPanel={(panel: PanelType) => setSession((current) => ({...current, settings: {...current.settings, docPanel: panel}}))}
           onInsert={insert}
-          onReveal={(href) => activeTab && adapters.current.get(activeTab.id)?.reveal({headingId: href.replace(/^#/u, '')})}
+          onReveal={(target) => activeTab && adapters.current.get(activeTab.id)?.reveal(target)}
           onOpenRelative={openRelativeFile}
           onRestore={(version) => {
             if (!activeTab) return;
@@ -759,9 +854,20 @@ export default function App() {
         <p className="modal-note">Формулы и Mermaid встраиваются в результат. Сетевые ресурсы не используются.</p>
       </Modal> : null}
 
-      {dialog === 'import' && importPreview ? <Modal title="Предпросмотр импорта" onClose={() => {setDialog(null); setImportPreview(null);}} wide footer={<><Button onClick={() => {setDialog(null); setImportPreview(null);}}>Отмена</Button><Button view="action" onClick={() => {addDocument(importPreview.name, importPreview.markdown, {dirty: true}); setDialog(null); setImportPreview(null);}}>Открыть как Markdown</Button></>}>
-        {importPreview.losses.length ? <div className="warning-box">Не перенесено: {importPreview.losses.join(', ')}.</div> : null}
-        <pre className="import-preview">{importPreview.markdown.slice(0, 20_000)}</pre>
+      {dialog === 'import' && importPreview && activeImport ? <Modal title={importPreview.analysis?.confluence ? 'Импорт таблицы из Confluence' : 'Предпросмотр импорта'} onClose={closeImport} wide footer={<><Button onClick={closeImport}>Отмена</Button><Button view="action" onClick={applyImport}>{importPreview.destination.kind === 'insert' ? 'Вставить' : 'Открыть как Markdown'}</Button></>}>
+        {importPreview.analysis?.hasTables ? <>
+          <SegmentedRadioGroup value={importMode} onUpdate={(value) => setImportMode(value as HtmlTableImportMode)}>
+            <SegmentedRadioGroup.Option value="exact">Точный HTML</SegmentedRadioGroup.Option>
+            <SegmentedRadioGroup.Option value="portable">Переносимый GFM</SegmentedRadioGroup.Option>
+            <SegmentedRadioGroup.Option value="readable">Читаемый Markdown</SegmentedRadioGroup.Option>
+          </SegmentedRadioGroup>
+          <p className="import-stats">{importPreview.analysis.stats.tables} табл. · {importPreview.analysis.stats.rows} строк · до {importPreview.analysis.stats.columns} колонок · {importPreview.analysis.stats.mergedCells} объединений</p>
+        </> : null}
+        {importIssues.length ? <div className="import-issues">{importIssues.map((item, index) => <div className={item.severity === 'warning' ? 'warning-box' : 'info-box'} key={`${item.code}-${index}`}>{item.message}{item.count ? ` (${item.count})` : ''}.</div>)}</div> : importPreview.result?.losses.length ? <div className="warning-box">Не перенесено: {importPreview.result.losses.join(', ')}.</div> : null}
+        <div className="import-preview-tabs"><button type="button" className={importView === 'rendered' ? 'active' : ''} onClick={() => setImportView('rendered')}>Вид</button><button type="button" className={importView === 'markdown' ? 'active' : ''} onClick={() => setImportView('markdown')}>Markdown</button></div>
+        {importView === 'rendered'
+          ? <MarkdownPreview markdown={activeImport.markdown} jiraBase={session.settings.jiraBase} theme={theme.gravity} className="import-rendered-preview" />
+          : <pre className="import-preview">{activeImport.markdown.slice(0, 100_000)}</pre>}
       </Modal> : null}
 
       {dialog === 'settings' ? <Modal title="Интеграции и настройки" onClose={() => setDialog(null)} footer={<Button view="action" onClick={() => setDialog(null)}>Готово</Button>}>
@@ -799,14 +905,7 @@ export default function App() {
 
       {dialog === 'table' && activeTab ? <TableLab markdown={activeTab.markdown} onClose={() => setDialog(null)} onApply={(markdown) => {replaceTabMarkdown(activeTab.id, markdown); setDialog(null);}} /> : null}
 
-      {recovery ? <Modal title="Восстановить черновики?" onClose={() => {localStorage.removeItem(AUTOSAVE_KEY); setRecovery(null);}} footer={<><Button onClick={() => {localStorage.removeItem(AUTOSAVE_KEY); setRecovery(null);}}>Не восстанавливать</Button><Button view="action" onClick={() => {
-        for (const recovered of recovery.tabs) {
-          const existing = sessionRef.current.tabs.find((tab) => tab.name === recovered.name);
-          if (existing) replaceTabMarkdown(existing.id, recovered.md);
-          else addDocument(recovered.name, recovered.md, {dirty: true});
-        }
-        setRecovery(null); notify('Черновики восстановлены.');
-      }}>Восстановить</Button></>}><p>После предыдущего запуска остались несохранённые документы от {new Date(recovery.ts).toLocaleString('ru-RU')}.</p><ul>{recovery.tabs.map((tab) => <li key={tab.name}>{tab.name}</li>)}</ul></Modal> : null}
+      {recovery ? <Modal title="Восстановить черновики?" onClose={() => finishRecovery(false)} footer={<><Button onClick={() => finishRecovery(false)}>Не восстанавливать</Button><Button view="action" onClick={() => finishRecovery(true)}>Восстановить</Button></>}><p>После предыдущего запуска остались несохранённые документы от {new Date(recovery.ts).toLocaleString('ru-RU')}.</p><ul>{recovery.tabs.map((tab, index) => <li key={tab.id || index}>{tab.name}</li>)}</ul></Modal> : null}
 
       {conflict ? <Modal title="Файл изменён на диске" onClose={() => setConflict(null)} footer={<><Button onClick={() => setConflict(null)}>Отмена</Button><Button onClick={() => {setConflict(null); void saveTab(conflict.id);}}>Оставить мою версию</Button><Button view="action" onClick={() => {
         snapshot(conflict.id, 'перед версией с диска');

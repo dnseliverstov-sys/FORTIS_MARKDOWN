@@ -39,6 +39,8 @@ button { color: inherit; }
 .menu-popup button:disabled { opacity: .42; cursor: default; }
 .menu-popup kbd { color: var(--fortis-muted); font-size: 10px; font-family: var(--fortis-ui-font); }
 .top-actions { display: flex; align-self: stretch; margin-left: auto; }
+.top-actions button { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-height: 34px; flex-shrink: 0; }
+.top-actions button[aria-pressed="true"] { background: color-mix(in srgb, var(--fortis-accent) 18%, transparent); }
 
 .actionbar { min-height: 57px; display: flex; align-items: stretch; padding: 5px 8px; gap: 6px; background: var(--fortis-surface); border-bottom: 1px solid var(--fortis-edge); overflow-x: auto; }
 .actionbar > button { min-width: 49px; padding: 0 5px; border: 0; border-radius: var(--fortis-radius); background: transparent; color: var(--fortis-text); font-size: 18px; cursor: pointer; }
@@ -63,20 +65,24 @@ button { color: inherit; }
 .findbar .g-text-input { width: 220px; }
 .icon-button { border: 0; background: transparent; font-size: 20px; cursor: pointer; }
 
-.workspace { min-height: 0; display: flex; flex: 1; }
+.workspace { min-height: 0; display: flex; flex: 1; position: relative; }
 .left-pane, .right-pane { min-width: 190px; max-width: 480px; flex: none; background: var(--fortis-chrome); overflow: hidden; }
 .left-pane { border-right: 1px solid var(--fortis-edge); display: grid; grid-template-rows: minmax(0, 1fr) auto; }
 .right-pane { border-left: 1px solid var(--fortis-edge); }
+.left-pane[hidden] { display: none; }
 .editor-area { min-width: 0; min-height: 0; flex: 1; position: relative; background: var(--fortis-bg); }
 .editor-pane { position: absolute; inset: 0; min-width: 0; min-height: 0; overflow: hidden; }
 .editor-pane[hidden] { display: none; }
-.fortis-gravity-editor { height: 100%; background: var(--fortis-document); }
+.fortis-gravity-editor { height: 100%; background: var(--fortis-document); color: var(--fortis-text); --g-md-editor-padding: 0; --g-md-editor-max-width: none; }
 .fortis-gravity-editor .md-editor__editor-wrapper { height: 100%; }
 .fortis-gravity-editor .md-editor__editor { min-height: 100%; height: 100%; }
-.fortis-gravity-editor .ProseMirror { max-width: 860px; min-height: calc(100vh - 230px); margin: 0 auto; padding: 34px 42px 110px; font-size: 15px; line-height: 1.75; }
+.fortis-app .fortis-gravity-editor .ProseMirror { max-width: none; width: 100%; min-height: calc(100vh - 230px); margin: 0; padding: 24px 20px 110px; font-size: 15px; line-height: 1.75; color: var(--fortis-text); background: var(--fortis-document); }
+.fortis-app .g-md-wysiwyg-editor__editor { min-height: 0; overflow: auto; padding: 0; background: var(--fortis-document); }
+.fortis-app .g-md-editor-component__editor-wrapper { min-height: 0; }
 .fortis-gravity-editor .cm-editor { height: 100%; font-size: 14px; }
 .fortis-gravity-editor .cm-scroller { padding: 20px 0 100px; }
-.fortis-gravity-editor .cm-content { max-width: 1000px; margin: 0 auto; padding: 0 34px; }
+.fortis-app .fortis-gravity-editor .cm-content { max-width: none; margin: 0; padding: 0 20px; color: var(--fortis-text); caret-color: var(--fortis-text); }
+.fortis-app .fortis-gravity-editor :is(.cm-editor, .cm-scroller, .cm-gutters) { background: var(--fortis-document); color: var(--fortis-text); }
 .fortis-gravity-editor .md-editor-toolbar { border-color: var(--fortis-edge); }
 .fortis-complex-table-node { margin: 12px 0; padding: 7px; overflow: auto; border: 1px dashed var(--fortis-accent); border-radius: var(--fortis-radius); cursor: pointer; }
 .fortis-complex-table-node table { width: 100%; border-collapse: collapse; }
@@ -87,6 +93,8 @@ button { color: inherit; }
 
 .workspace-tree, .document-panel { height: 100%; min-height: 0; display: flex; flex-direction: column; }
 .panel-title { padding: 10px; color: var(--fortis-muted); font-size: 9px; letter-spacing: .12em; }
+.panel-header { display: flex; align-items: center; justify-content: space-between; flex: none; border-bottom: 1px solid var(--fortis-edge); }
+.panel-header .icon-button { width: 32px; height: 32px; flex: none; }
 .tree-row, .panel-row { width: 100%; display: flex; align-items: center; gap: 7px; min-height: 27px; padding: 4px 9px; border: 0; background: transparent; text-align: left; color: var(--fortis-text); font-size: 11.5px; cursor: pointer; }
 .tree-row:hover, .panel-row:hover { background: color-mix(in srgb, var(--fortis-accent) 12%, transparent); }
 .tree-icon { width: 11px; color: var(--fortis-muted); }
@@ -112,7 +120,7 @@ button { color: inherit; }
 .mode-switch button.active { background: color-mix(in srgb, var(--fortis-accent) 22%, transparent); color: var(--fortis-text); }
 
 .fortis-preview { height: 100%; overflow: auto; background: var(--fortis-document); }
-.fortis-document { max-width: 820px; min-height: 100%; margin: 0 auto; padding: 38px 44px 100px; font-size: 15px; line-height: 1.75; color: var(--fortis-text); }
+.fortis-document { max-width: none; min-height: 100%; margin: 0; padding: 24px 20px 100px; font-size: 15px; line-height: 1.75; color: var(--fortis-text); }
 :is(.fortis-document, .fortis-gravity-editor .ProseMirror) h1,
 :is(.fortis-document, .fortis-gravity-editor .ProseMirror) h2,
 :is(.fortis-document, .fortis-gravity-editor .ProseMirror) h3 { font-family: var(--fortis-heading-font); }
@@ -123,8 +131,13 @@ button { color: inherit; }
 .fortis-document table { display: block; overflow: auto; }
 :is(.fortis-document, .fortis-gravity-editor .ProseMirror) th,
 :is(.fortis-document, .fortis-gravity-editor .ProseMirror) td { padding: 7px 9px; border: 1px solid var(--fortis-edge); }
+.fortis-app :is(.fortis-document, .fortis-gravity-editor) { --fortis-table-border: color-mix(in srgb, var(--fortis-text) 38%, var(--fortis-document)); --yfm-color-table: var(--fortis-text); --yfm-color-table-border: var(--fortis-table-border); --yfm-color-table-background: var(--fortis-document); --yfm-color-table-head-background: var(--fortis-surface); }
+.fortis-app :is(.fortis-document, .fortis-gravity-editor .ProseMirror) table { border-collapse: collapse; border: 1px solid var(--fortis-table-border) !important; }
+.fortis-app :is(.fortis-document, .fortis-gravity-editor .ProseMirror) :is(th, td) { border: 1px solid var(--fortis-table-border) !important; padding: 7px 9px; }
+.fortis-app :is(.fortis-document, .fortis-gravity-editor .ProseMirror) th:not([style*="background"]) { background: var(--fortis-surface); }
 :is(.fortis-document, .fortis-gravity-editor .ProseMirror) .fortis-alert { position: relative; margin: 14px 0; padding: 11px 14px 11px 38px; border: 1px solid color-mix(in srgb, var(--fortis-accent) 50%, var(--fortis-edge)); border-left: 4px solid var(--fortis-accent); border-radius: var(--fortis-radius); background: color-mix(in srgb, var(--fortis-accent) 10%, transparent); }
 :is(.fortis-document, .fortis-gravity-editor .ProseMirror) .fortis-alert::before { content: attr(data-alert); position: absolute; left: 9px; top: 11px; color: var(--fortis-accent); font-size: 8px; writing-mode: vertical-rl; }
+:is(.fortis-document, .fortis-gravity-editor .ProseMirror) .fortis-table-tip { display: block; margin: 5px 0; padding: 7px 9px; border: 1px solid #6a9b72; border-radius: 5px; background: rgb(70 145 86 / .12); }
 :is(.fortis-document, .fortis-gravity-editor .ProseMirror) .mermaid { min-height: 100px; padding: 12px; text-align: center; }
 :is(.fortis-document, .fortis-gravity-editor .ProseMirror) .mermaid svg { max-width: 100%; }
 .fortis-mermaid-error { color: #e87171; white-space: pre-wrap; }
@@ -151,6 +164,13 @@ button { color: inherit; }
 .form-grid select, .form-grid input, .table-lab-toolbar select, .table-lab-toolbar input, .table-lab-cell select, .table-lab-cell input { min-height: 30px; border: 1px solid var(--fortis-edge); border-radius: 5px; background: var(--fortis-bg); color: var(--fortis-text); }
 .field-label { margin-bottom: 13px; }
 .warning-box { margin-bottom: 10px; padding: 9px 11px; border: 1px solid #b98535; border-radius: 6px; background: rgb(185 133 53 / .12); }
+.info-box { margin-bottom: 10px; padding: 9px 11px; border: 1px solid color-mix(in srgb, var(--fortis-accent) 50%, var(--fortis-edge)); border-radius: 6px; background: color-mix(in srgb, var(--fortis-accent) 8%, transparent); }
+.import-issues { margin-top: 10px; }
+.import-stats { margin: 9px 0 0; color: var(--fortis-muted); font-size: 11px; }
+.import-preview-tabs { display: flex; gap: 4px; margin: 10px 0 6px; }
+.import-preview-tabs button { padding: 5px 10px; border: 1px solid var(--fortis-edge); border-radius: 5px; background: transparent; color: var(--fortis-muted); cursor: pointer; }
+.import-preview-tabs button.active { border-color: var(--fortis-accent); background: color-mix(in srgb, var(--fortis-accent) 14%, transparent); color: var(--fortis-text); }
+.import-rendered-preview { position: relative; max-height: 58vh; padding: 14px; overflow: auto; border: 1px solid var(--fortis-edge); border-radius: 6px; background: var(--fortis-document); }
 .import-preview, .diff-view { max-height: 60vh; margin: 0; padding: 12px; overflow: auto; border: 1px solid var(--fortis-edge); border-radius: 6px; background: var(--fortis-bg); color: var(--fortis-text); white-space: pre-wrap; }
 .diff-view span { display: block; min-height: 1.35em; }
 .diff-added { background: rgb(40 150 90 / .18); color: #8de0af; }
@@ -197,12 +217,14 @@ button { color: inherit; }
 .fortis-toast { position: fixed; z-index: 1200; right: 18px; bottom: 42px; max-width: 460px; padding: 10px 14px; border: 1px solid var(--fortis-edge); border-radius: var(--fortis-radius); background: var(--fortis-surface); box-shadow: 0 12px 30px rgb(0 0 0 / .35); font-size: 12px; }
 
 @media (max-width: 1050px) {
-  .right-pane { display: none; }
+  .right-pane { position: absolute; z-index: 30; right: 0; top: 0; bottom: 0; max-width: min(480px, 85vw); box-shadow: -8px 0 20px rgb(0 0 0 / .2); }
   .brand > span:last-child { display: none; }
 }
 
 @media (max-width: 780px) {
-  .left-pane { display: none; }
+  .left-pane:not([hidden]) { position: absolute; z-index: 30; left: 0; top: 0; bottom: 0; max-width: 85vw; box-shadow: 8px 0 20px rgb(0 0 0 / .2); }
+  .topbar { gap: 5px; }
+  .top-actions button { padding: 0 6px; }
   .main-menu { display: none; }
   .actionbar { min-height: 48px; }
   .action-group button { min-width: 37px; }

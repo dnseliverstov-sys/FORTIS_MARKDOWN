@@ -24,6 +24,25 @@ describe('portable tables', () => {
     expect(output).not.toContain('{%');
   });
 
+  it('round-trips colgroup, safe colors and rich cell HTML until that cell is edited', () => {
+    const markdown = '<table style="width:90%"><colgroup><col style="width:30%"><col style="width:70%"></colgroup><tbody><tr><th>A</th><th>B</th></tr><tr><td style="background-color:#f4f5f7;color:rgb(0,51,102)"><ul><li>Один</li><li>Два</li></ul></td><td>Текст</td></tr></tbody></table>';
+    const [table] = extractTables(markdown);
+    expect(table.width).toBe('90%');
+    expect(table.columnWidths).toEqual(['30%', '70%']);
+    expect(table.rows[1][0]).toMatchObject({background: 'rgb(244, 245, 247)', color: 'rgb(0, 51, 102)'});
+    const untouched = serializeTable(table);
+    expect(untouched).toContain('<colgroup>');
+    expect(untouched).toContain('<ul>');
+    expect(untouched).toContain('background-color:rgb(244, 245, 247)');
+
+    table.rows[1][0].text = 'Изменено';
+    table.rows[1][0].html = undefined;
+    const edited = serializeTable(table);
+    expect(edited).toContain('>Изменено</td>');
+    expect(edited).not.toContain('<ul>');
+    expect(edited).toContain('background-color:rgb(244, 245, 247)');
+  });
+
   it('merges and splits a rectangular selection', () => {
     const table = extractTables('| A | B |\n| --- | --- |\n| C | D |')[0];
     const merged = mergeTableCells(table, ['1:0', '1:1']);

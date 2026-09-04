@@ -4,6 +4,7 @@ import type {WorkspaceNode} from '../types';
 interface Props {
   root: WorkspaceNode | null;
   onOpen(node: WorkspaceNode): void;
+  onClose(): void;
 }
 
 function NodeRow({node, depth, onOpen}: {node: WorkspaceNode; depth: number; onOpen(node: WorkspaceNode): void}) {
@@ -28,13 +29,13 @@ function NodeRow({node, depth, onOpen}: {node: WorkspaceNode; depth: number; onO
   );
 }
 
-export function WorkspaceTree({root, onOpen}: Props) {
+export function WorkspaceTree({root, onOpen, onClose}: Props) {
   return (
     <aside className="workspace-tree">
-      <div className="panel-title">РАБОЧЕЕ ПРОСТРАНСТВО</div>
-      {root ? <NodeRow node={root} depth={0} onOpen={onOpen} /> : (
+      <div className="panel-header"><div className="panel-title">РАБОЧЕЕ ПРОСТРАНСТВО</div><button type="button" className="icon-button" aria-label="Свернуть дерево файлов" title="Свернуть дерево файлов" onClick={onClose}>×</button></div>
+      <div className="panel-scroll">{root ? <NodeRow node={root} depth={0} onOpen={onOpen} /> : (
         <div className="empty-panel">Откройте папку с Markdown-файлами.</div>
-      )}
+      )}</div>
     </aside>
   );
 }

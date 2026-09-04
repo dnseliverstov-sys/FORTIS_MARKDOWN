@@ -1,7 +1,17 @@
 import {describe, expect, it} from 'vitest';
 import {buildExportHtml, renderMarkdown, sanitizeHtml} from './pipeline';
+import {resolveNavigation} from './navigation';
 
 describe('portable markdown pipeline', () => {
+  it('locates repeated Cyrillic and Setext headings and explicit anchors', () => {
+    const md = '# Заголовок\n\n## Повтор\n\nтекст\n\n<a id="явный"></a>\n\nПовтор\n------\n';
+    const headings = renderMarkdown(md).headings;
+    expect(headings.map((item) => item.line)).toEqual([0, 2, 8]);
+    expect(headings.map((item) => item.headingIndex)).toEqual([0, 1, 2]);
+    expect(new Set(headings.map((item) => item.href)).size).toBe(3);
+    expect(resolveNavigation(md, headings, {headingId: encodeURIComponent('явный')})).toMatchObject({line: 6, headingIndex: 2});
+    expect(resolveNavigation(md, headings, {headingId: headings[2].href.slice(1)})).toMatchObject({line: 8, headingIndex: 2});
+  });
   it('renders GFM alerts, Jira keys, tasks and formulas without producing YFM markup', () => {
     const markdown = `# Проверка\n\n> [!NOTE]\n> Важно для DOCS-42\n\n- [x] Готово\n\n$E=mc^2$\n`;
     const result = renderMarkdown(markdown, 'https://jira.example');
@@ -43,5 +53,12 @@ describe('portable markdown pipeline', () => {
     expect(clean).toContain('style="width:75%"');
     expect(clean).toContain('rowspan="2"');
     expect(clean).toContain('style="text-align:center"');
+  });
+
+  it('keeps safe table colors but rejects arbitrary background CSS', () => {
+    const clean = sanitizeHtml('<table><tr><td style="background-color:#f4f5f7;color:rgb(0,51,102)">ok</td><td style="background:url(https://bad);color:expression(bad)">bad</td></tr></table>');
+    expect(clean).toContain('background-color:#f4f5f7');
+    expect(clean).toContain('color:rgb(0,51,102)');
+    expect(clean).not.toMatch(/url\(|expression|https:\/\/bad/iu);
   });
 });

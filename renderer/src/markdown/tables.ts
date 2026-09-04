@@ -9,6 +9,8 @@ export interface PortableCell {
   rowspan: number;
   align: 'left' | 'center' | 'right';
   width?: string;
+  background?: string;
+  color?: string;
 }
 
 export interface PortableTable {
@@ -17,6 +19,8 @@ export interface PortableTable {
   end: number;
   rows: PortableCell[][];
   complex: boolean;
+  width?: string;
+  columnWidths?: string[];
 }
 
 interface CellPlacement {
@@ -112,17 +116,24 @@ function escapeCell(text: string): string {
 
 function safeCellHtml(cell: PortableCell): string {
   const tag = cell.header ? 'th' : 'td';
+  const styles = [
+    cell.align !== 'left' ? `text-align:${cell.align}` : '',
+    cell.width ? `width:${cell.width}` : '',
+    cell.background ? `background-color:${cell.background}` : '',
+    cell.color ? `color:${cell.color}` : '',
+  ].filter(Boolean).join(';');
   const attrs = [
     cell.colspan > 1 ? ` colspan="${cell.colspan}"` : '',
     cell.rowspan > 1 ? ` rowspan="${cell.rowspan}"` : '',
-    cell.align !== 'left' ? ` style="text-align:${cell.align}${cell.width ? `;width:${cell.width}` : ''}"` : cell.width ? ` style="width:${cell.width}"` : '',
+    styles ? ` style="${styles}"` : '',
   ].join('');
   const content = cell.html ?? cell.text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>');
   return `<${tag}${attrs}>${content}</${tag}>`;
 }
 
 export function serializeTable(table: PortableTable): string {
-  const complex = table.complex || table.rows.some((row) => row.some((cell) => cell.colspan > 1 || cell.rowspan > 1 || cell.width));
+  const complex = table.complex || table.width || table.columnWidths?.some(Boolean)
+    || table.rows.some((row) => row.some((cell) => cell.colspan > 1 || cell.rowspan > 1 || cell.width || cell.background || cell.color));
   if (!complex && table.rows.length) {
     const [head, ...body] = table.rows;
     const divider = head.map((cell) => cell.align === 'center' ? ':---:' : cell.align === 'right' ? '---:' : ':---');
@@ -133,7 +144,8 @@ export function serializeTable(table: PortableTable): string {
   const bodyRows = table.rows.filter((row) => !row.some((cell) => cell.header));
   const renderRows = (rows: PortableCell[][]) => rows.map((row) => `  <tr>${row.map(safeCellHtml).join('')}</tr>`).join('\n');
   const html = [
-    '<table>',
+    `<table${table.width ? ` style="width:${table.width}"` : ''}>`,
+    ...(table.columnWidths?.some(Boolean) ? [` <colgroup>${table.columnWidths.map((width) => `<col${width ? ` style="width:${width}"` : ''}>`).join('')}</colgroup>`] : []),
     ...(headRows.length ? [' <thead>', renderRows(headRows), ' </thead>'] : []),
     ' <tbody>',
     renderRows(bodyRows.length ? bodyRows : headRows),
@@ -147,7 +159,7 @@ function htmlTable(source: string, start: number): PortableTable | null {
   const doc = new DOMParser().parseFromString(source, 'text/html');
   const table = doc.querySelector('table');
   if (!table) return null;
-  const rows = Array.from(table.querySelectorAll('tr')).map((row) => Array.from(row.children).filter((cell) => /^(TD|TH)$/.test(cell.tagName)).map((cell) => {
+  const rows = Array.from(table.rows).map((row) => Array.from(row.children).filter((cell) => /^(TD|TH)$/.test(cell.tagName)).map((cell) => {
     const element = cell as HTMLTableCellElement;
     const style = element.style;
     return {
@@ -158,16 +170,24 @@ function htmlTable(source: string, start: number): PortableTable | null {
       rowspan: Math.max(1, element.rowSpan || 1),
       align: (style.textAlign === 'center' || style.textAlign === 'right' ? style.textAlign : 'left') as PortableCell['align'],
       width: style.width || element.getAttribute('width') || undefined,
+      background: style.backgroundColor || undefined,
+      color: style.color || undefined,
     };
   }));
-  return {source, start, end: start + source.length, rows, complex: true};
+  const colgroup = Array.from(table.children).find((element) => element.tagName === 'COLGROUP');
+  const columnWidths = colgroup ? Array.from(colgroup.children).filter((element) => element.tagName === 'COL').map((element) => (element as HTMLElement).style.width || element.getAttribute('width') || '') : undefined;
+  return {
+    source, start, end: start + source.length, rows, complex: true,
+    width: table.style.width || table.getAttribute('width') || undefined,
+    columnWidths,
+  };
 }
 
 function inlineHtmlToMarkdown(element: Element): string {
-  const render = (node: Node): string => {
+  const render = (node: Node, listDepth = 0): string => {
     if (node.nodeType === Node.TEXT_NODE) return node.textContent || '';
     if (!(node instanceof Element)) return '';
-    const content = Array.from(node.childNodes).map(render).join('');
+    const content = Array.from(node.childNodes).map((child) => render(child, listDepth)).join('');
     switch (node.tagName) {
       case 'BR': return '\n';
       case 'STRONG': case 'B': return `**${content}**`;
@@ -176,10 +196,17 @@ function inlineHtmlToMarkdown(element: Element): string {
       case 'CODE': return `\`${content.replace(/`/gu, '\\`')}\``;
       case 'A': return `[${content}](${node.getAttribute('href') || ''})`;
       case 'IMG': return `![${node.getAttribute('alt') || ''}](${node.getAttribute('src') || ''})`;
+      case 'UL': case 'OL': return Array.from(node.children).filter((child) => child.tagName === 'LI').map((child, index) => {
+        const own = Array.from(child.childNodes).filter((part) => !(part instanceof Element && /^(UL|OL)$/u.test(part.tagName))).map((part) => render(part, listDepth + 1)).join('').trim();
+        const nested = Array.from(child.children).filter((part) => /^(UL|OL)$/u.test(part.tagName)).map((part) => render(part, listDepth + 1)).join('\n');
+        const marker = node.tagName === 'OL' ? `${index + 1}.` : listDepth ? '◦' : '•';
+        return `${marker} ${own}${nested ? `\n${nested}` : ''}`;
+      }).join('\n');
+      case 'P': case 'DIV': return `${content.trim()}\n`;
       default: return content;
     }
   };
-  return Array.from(element.childNodes).map(render).join('').trim();
+  return Array.from(element.childNodes).map((node) => render(node)).join('').replace(/\n{3,}/gu, '\n\n').trim();
 }
 
 function pipeTable(source: string, start: number): PortableTable | null {
@@ -215,6 +242,7 @@ export function replaceTable(markdown: string, table: PortableTable): string {
 export function createPortableTable(rows = 2, columns = 2): PortableTable {
   return {
     source: '', start: 0, end: 0, complex: false,
+    columnWidths: Array.from({length: columns}, () => ''),
     rows: Array.from({length: rows}, (_, row) => Array.from({length: columns}, (_, column) => ({
       text: row === 0 ? `Столбец ${column + 1}` : 'Значение', header: row === 0,
       colspan: 1, rowspan: 1, align: 'left' as const,

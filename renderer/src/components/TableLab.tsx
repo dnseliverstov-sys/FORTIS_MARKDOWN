@@ -12,7 +12,7 @@ interface Props {
 }
 
 function cloneTable(table: PortableTable): PortableTable {
-  return {...table, rows: table.rows.map((row) => row.map((cell) => ({...cell})))};
+  return {...table, columnWidths: table.columnWidths ? [...table.columnWidths] : undefined, rows: table.rows.map((row) => row.map((cell) => ({...cell})))};
 }
 
 export function TableLab({markdown, onApply, onClose}: Props) {
@@ -51,9 +51,14 @@ export function TableLab({markdown, onApply, onClose}: Props) {
             text: rowIndex === 0 ? `Столбец ${row.length + 1}` : 'Значение',
             header: rowIndex === 0, colspan: 1, rowspan: 1, align: 'left',
           }));
+          table.columnWidths ||= [];
+          table.columnWidths.push('');
         })}>+ столбец</button>
         <button type="button" disabled={draft.rows.length <= 2} onClick={() => update((table) => table.rows.pop())}>− строка</button>
-        <button type="button" disabled={columns <= 1} onClick={() => update((table) => table.rows.forEach((row) => row.pop()))}>− столбец</button>
+        <button type="button" disabled={columns <= 1} onClick={() => update((table) => {
+          table.rows.forEach((row) => row.pop());
+          table.columnWidths?.pop();
+        })}>− столбец</button>
         <button type="button" disabled={selected.size < 2} onClick={() => {
           try {setDraft(mergeTableCells(draft, Array.from(selected))); setSelected(new Set()); setTableError('');}
           catch (error) {setTableError(error instanceof Error ? error.message : String(error));}

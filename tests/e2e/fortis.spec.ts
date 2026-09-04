@@ -12,6 +12,24 @@ let userData: string;
 const runtimeErrors: string[] = [];
 const externalResources: string[] = [];
 
+const confluenceTableHtml = `<div data-macro-name="ui-expand" class="rwui_expandable_item">
+  <a class="rwui_expandable_item_title" onclick="bad()">Таблица состояний</a>
+  <div class="rwui_expandable_item_body"><table class="confluenceTable" style="width:90%"><colgroup><col style="width:20%"><col style="width:10%"><col style="width:20%"><col style="width:10%"><col style="width:10%"><col style="width:10%"><col style="width:20%"></colgroup><tbody>
+    <tr><th rowspan="2">Поле</th><th rowspan="2">Тип</th><th rowspan="2">Описание</th><th colspan="2">Структура входных параметров в зависимости от состояния</th><th rowspan="2">Свойства</th><th rowspan="2">Правило заполнения параметров</th></tr>
+    <tr><th>RUNNING</th><th>FAULT</th></tr>
+    <tr><td data-highlight-colour="#f4f5f7">code</td><td>string</td><td>Код</td><td>✅</td><td><img data-emoticon-name="minus" src="https://bad.example/forbidden.svg" alt="(минус)"></td><td>maxLength: 10</td><td><div data-macro-name="tip"><div class="confluence-information-macro-body"><ul><li>Правило один</li><li>Правило два</li></ul></div></div></td></tr>
+  </tbody></table></div><script>bad()</script>
+</div>`;
+
+async function dispatchPaste(data: {html?: string; text?: string}): Promise<void> {
+  await page.evaluate((value) => {
+    const transfer = new DataTransfer();
+    if (value.html) transfer.setData('text/html', value.html);
+    transfer.setData('text/plain', value.text || 'текст из буфера');
+    (document.activeElement || document.body).dispatchEvent(new ClipboardEvent('paste', {bubbles: true, cancelable: true, clipboardData: transfer}));
+  }, data);
+}
+
 function watchPage(target: Page): void {
   target.on('pageerror', (error) => runtimeErrors.push(error.message));
   target.on('request', (request) => {if (/^https?:/iu.test(request.url())) externalResources.push(request.url());});
@@ -88,7 +106,10 @@ test('restores autosaved Markdown after an interrupted desktop session', async (
     }));
     // Registered after the application handler, this restores the crash marker
     // after pagehide has attempted to mark an ordinary clean navigation.
-    window.addEventListener('pagehide', () => localStorage.setItem('fortis.exit', 'no'), {once: true});
+    window.addEventListener('pagehide', () => {
+      localStorage.setItem('fortis.exit', 'no');
+      localStorage.setItem('fortis.autosave', JSON.stringify({ts: Date.now(), tabs: [{name: 'Восстановленный.md', md: '# Черновик после сбоя\n'}]}));
+    }, {once: true});
   });
   const loaded = page.waitForEvent('load');
   await page.evaluate(() => location.reload());
@@ -97,6 +118,7 @@ test('restores autosaved Markdown after an interrupted desktop session', async (
 
   await expect(page.getByRole('dialog', {name: 'Восстановить черновики?'})).toBeVisible();
   await page.getByRole('button', {name: 'Восстановить', exact: true}).click();
+  await page.locator('.top-actions').getByRole('button', {name: 'Панель документа', exact: true}).click();
   await expect(page.locator('.file-tab.active')).toContainText('Восстановленный.md');
   await expect(page.locator('.document-panel')).toContainText('Черновик после сбоя');
   await page.getByRole('button', {name: 'Закрыть Восстановленный.md', exact: true}).click();
@@ -267,6 +289,85 @@ test('keeps mode changes clean and covers complex tables, formulas, isolated und
   await expect(page.getByRole('dialog', {name: 'Файл изменён на диске'})).toBeVisible({timeout: 15_000});
   await page.getByRole('button', {name: 'Взять с диска', exact: true}).click();
   await expect(page.locator('.document-panel')).toContainText('Внешняя версия');
+
+  expect(runtimeErrors).toEqual([]);
+  expect(externalResources).toEqual([]);
+});
+
+test('imports Confluence tables from paste and HTML files with three preview modes', async () => {
+  await page.locator('.actionbar button[title^="Новый документ"]').click();
+  await page.getByRole('button', {name: 'Разметка', exact: true}).click();
+  const source = page.locator('.editor-pane:not([hidden]) .cm-content');
+  await source.focus();
+  await page.keyboard.insertText('BEGIN END');
+  await page.keyboard.press('Home');
+  for (let index = 0; index < 6; index += 1) await page.keyboard.press('ArrowRight');
+
+  await dispatchPaste({html: confluenceTableHtml, text: 'fallback'});
+  const dialog = page.getByRole('dialog', {name: 'Импорт таблицы из Confluence'});
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toContainText('3 строк');
+  await dialog.getByRole('button', {name: 'Markdown', exact: true}).click();
+  await expect(dialog.locator('.import-preview')).toContainText('<table');
+  await dialog.getByRole('radio', {name: 'Переносимый GFM', exact: true}).check();
+  await expect(dialog.locator('.import-preview')).toContainText('| Поле | Тип | Описание |');
+  await dialog.getByRole('radio', {name: 'Читаемый Markdown', exact: true}).check();
+  await expect(dialog.locator('.import-preview')).toContainText('### Каталог полей');
+  await dialog.getByRole('button', {name: 'Отмена', exact: true}).click();
+  await expect(source).toContainText('BEGIN END');
+  await expect(source).not.toContainText('<table');
+
+  await source.focus();
+  await page.keyboard.press('Home');
+  for (let index = 0; index < 6; index += 1) await page.keyboard.press('ArrowRight');
+  await dispatchPaste({html: confluenceTableHtml});
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole('button', {name: 'Вставить', exact: true}).click();
+  await expect(source).toContainText('<table');
+  const pastedSource = await source.innerText();
+  expect(pastedSource.indexOf('BEGIN')).toBeLessThan(pastedSource.indexOf('<table'));
+  expect(pastedSource.indexOf('<table')).toBeLessThan(pastedSource.indexOf('END'));
+  expect(pastedSource).toContain('⛔');
+  expect(pastedSource).not.toContain('https://bad.example');
+  await page.locator('.actionbar button[title^="Отменить"]').click();
+  await expect(source).not.toContainText('<table');
+  await expect(source).toContainText('BEGIN END');
+
+  await source.focus();
+  await dispatchPaste({text: 'ОБЫЧНЫЙ ТЕКСТ'});
+  await expect(dialog).toBeHidden();
+  await expect(source).toContainText('ОБЫЧНЫЙ ТЕКСТ');
+
+  await page.getByRole('button', {name: 'Визуально', exact: true}).click();
+  const visual = page.locator('.editor-pane:not([hidden]) .ProseMirror');
+  await visual.click();
+  await dispatchPaste({html: confluenceTableHtml});
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole('button', {name: 'Вставить', exact: true}).click();
+  await expect(visual.locator('table')).toBeVisible();
+  await page.locator('.actionbar button[title^="Отменить"]').click();
+  await expect(visual.locator('table')).toHaveCount(0);
+  await visual.click();
+  await dispatchPaste({html: confluenceTableHtml});
+  await dialog.getByRole('button', {name: 'Вставить', exact: true}).click();
+  await page.getByRole('button', {name: 'Разметка', exact: true}).click();
+  const roundTripSource = page.locator('.editor-pane:not([hidden]) .cm-content');
+  await expect(roundTripSource).toContainText('<ul><li>Правило один</li><li>Правило два</li></ul>');
+  await expect(roundTripSource).toContainText('<colgroup>');
+  await expect(roundTripSource).toContainText('background-color:rgb(244, 245, 247)');
+
+  const htmlPath = path.join(root, 'confluence-sample.html');
+  fs.writeFileSync(htmlPath, confluenceTableHtml, 'utf8');
+  const chooserPromise = page.waitForEvent('filechooser');
+  await page.locator('.actionbar button[title^="Импорт"]').click();
+  const chooser = await chooserPromise;
+  await chooser.setFiles(htmlPath);
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toContainText('Точный HTML');
+  await dialog.getByRole('button', {name: 'Открыть как Markdown', exact: true}).click();
+  await expect(page.locator('.file-tab.active')).toContainText('confluence-sample.md');
+  await page.getByRole('button', {name: 'Разметка', exact: true}).click();
+  await expect(page.locator('.editor-pane:not([hidden]) .cm-content')).toContainText('<table');
 
   expect(runtimeErrors).toEqual([]);
   expect(externalResources).toEqual([]);

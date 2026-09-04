@@ -8,8 +8,10 @@ import '@diplodoc/transform/dist/css/yfm.css';
 import '@gravity-ui/markdown-editor/styles/yfm-themes.css';
 import './styles.css';
 import App from './App';
+import {configure as configureMarkdownEditor} from '@gravity-ui/markdown-editor';
 
 window.katex = katexRuntime;
+configureMarkdownEditor({lang: 'ru'});
 const toaster = new Toaster();
 const root = document.getElementById('root');
 

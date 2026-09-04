@@ -55,7 +55,9 @@ export function keyboardCombo(event: KeyboardEvent): string {
   if (event.altKey) keys.push('Alt');
   if (event.shiftKey) keys.push('Shift');
   if (!['Control', 'Meta', 'Alt', 'Shift'].includes(event.key)) {
-    keys.push(event.key.length === 1 ? event.key.toUpperCase() : event.key);
+    const key = (event.ctrlKey || event.metaKey || event.altKey) && /^Key[A-Z]$/u.test(event.code)
+      ? event.code.slice(3) : event.key;
+    keys.push(key.length === 1 ? key.toUpperCase() : key);
   }
   return keys.join('+');
 }

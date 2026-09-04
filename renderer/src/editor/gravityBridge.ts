@@ -1,9 +1,13 @@
 import {redo as codeMirrorRedo, undo as codeMirrorUndo} from '@codemirror/commands';
 import type {EditorView as CodeMirrorView} from '@codemirror/view';
+import {EditorView as CMView} from '@codemirror/view';
+import {openSearchPanel, closeSearchPanel} from '@codemirror/search';
+import {openSearch, closeSearch} from '@gravity-ui/markdown-editor/_/extensions/behavior/Search/commands.js';
+import {TextSelection} from 'prosemirror-state';
 import type {MarkdownEditorInstance, MarkupString} from '@gravity-ui/markdown-editor';
 import type {Fragment, Node as ProseMirrorNode} from 'prosemirror-model';
 import type {EditorView as ProseMirrorView} from 'prosemirror-view';
-import type {ViewMode} from '../types';
+import type {RevealTarget, ViewMode} from '../types';
 
 interface GravityAction {
   run(attrs?: Record<string, unknown>): void;
@@ -80,8 +84,37 @@ export function replaceGravityMarkdown(editor: MarkdownEditorInstance, markdown:
   internal(editor).emit('rerender', null);
 }
 
+export function refreshGravityView(editor: MarkdownEditorInstance): void {
+  internal(editor).emit('rerender', null);
+}
+
 export function insertGravityMarkdown(editor: MarkdownEditorInstance, markdown: string): void {
   editor.insert(markdown as MarkupString);
+}
+
+export type MarkdownInsertion = (markdown: string) => boolean;
+
+export function captureGravityInsertion(editor: MarkdownEditorInstance): MarkdownInsertion {
+  const source = internal(editor);
+  if (editor.currentMode === 'markup') {
+    const selection = source.cm.state.selection;
+    const documentLength = source.cm.state.doc.length;
+    return (markdown) => {
+      if (editor.currentMode !== 'markup' || source.cm.state.doc.length !== documentLength) return false;
+      source.cm.dispatch({selection});
+      editor.insert(markdown as MarkupString);
+      return true;
+    };
+  }
+  const view = source.wysiwygEditor.view;
+  const selection = view.state.selection;
+  const documentNode = view.state.doc;
+  return (markdown) => {
+    if (editor.currentMode !== 'wysiwyg' || view.state.doc !== documentNode) return false;
+    view.dispatch(view.state.tr.setSelection(selection));
+    editor.insert(markdown as MarkupString);
+    return true;
+  };
 }
 
 export function insertGravityFormula(editor: MarkdownEditorInstance, tex: string, block: boolean): boolean {
@@ -100,6 +133,59 @@ export function insertGravityFormula(editor: MarkdownEditorInstance, tex: string
 
 export function getGravityProseMirrorView(editor: MarkdownEditorInstance): ProseMirrorView {
   return internal(editor).wysiwygEditor.view;
+}
+
+export function openGravitySearch(editor: MarkdownEditorInstance): void {
+  const source = internal(editor);
+  editor.focus();
+  if (editor.currentMode === 'markup') openSearchPanel(source.cm);
+  else {
+    const view = source.wysiwygEditor.view;
+    openSearch(view.state, view.dispatch);
+  }
+}
+
+export function closeGravitySearch(editor: MarkdownEditorInstance): void {
+  const source = internal(editor);
+  if (editor.currentMode === 'markup') closeSearchPanel(source.cm);
+  else {
+    const view = source.wysiwygEditor.view;
+    closeSearch(view.state, view.dispatch);
+  }
+}
+
+export function revealGravityTarget(editor: MarkdownEditorInstance, target: RevealTarget): void {
+  const source = internal(editor);
+  if (editor.currentMode === 'markup') {
+    if (target.line === undefined) return;
+    const cm = source.cm;
+    const line = cm.state.doc.line(Math.max(1, Math.min(cm.state.doc.lines, target.line + 1)));
+    cm.dispatch({selection: {anchor: line.from}, effects: CMView.scrollIntoView(line.from, {y: 'center'})});
+    cm.focus();
+    return;
+  }
+  const view = source.wysiwygEditor.view;
+  let index = 0;
+  let position: number | undefined;
+  let nearestLine = -1;
+  view.state.doc.descendants((node, pos) => {
+    if (node.type.name === 'heading') {
+      if (target.headingIndex === index) position = pos;
+      index++;
+    }
+    if (target.headingIndex === undefined && target.line !== undefined) {
+      const line = node.attrs['data-line'];
+      if (line != null && Number(line) <= target.line && Number(line) > nearestLine) {
+        nearestLine = Number(line);
+        position = pos;
+      }
+    }
+  });
+  if (position === undefined) return;
+  view.dispatch(view.state.tr.setSelection(TextSelection.near(view.state.doc.resolve(position))).scrollIntoView());
+  const dom = view.nodeDOM(position);
+  if (dom instanceof HTMLElement) dom.scrollIntoView({block: 'center', inline: 'nearest'});
+  view.focus();
 }
 
 export interface GravityFormulaTarget {

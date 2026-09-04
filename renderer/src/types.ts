@@ -12,6 +12,7 @@ export interface DocumentTab {
   savedAt?: number;
   handleKey?: string;
   revision: number;
+  isDraft?: boolean;
 }
 
 export interface DocumentRuntime {
@@ -43,6 +44,7 @@ export interface AppSettings {
   toolbarVisible: boolean;
   treeVisible: boolean;
   docPanelVisible: boolean;
+  panelLayoutVersion: number;
   docPanel: DocumentPanel;
   spellcheck: boolean;
   jiraBase: string;
@@ -83,6 +85,8 @@ export interface MarkdownHeading {
   level: number;
   title: string;
   href: string;
+  line?: number;
+  headingIndex?: number;
 }
 
 export interface MarkdownLink {
@@ -101,6 +105,12 @@ export interface MarkdownAnalysis {
   lines: number;
 }
 
+export interface RevealTarget {
+  line?: number;
+  headingId?: string;
+  headingIndex?: number;
+}
+
 export interface EditorAdapter {
   getMarkdown(): string;
   replaceMarkdown(markdown: string, origin?: 'open' | 'disk' | 'recovery' | 'version'): void;
@@ -108,7 +118,9 @@ export interface EditorAdapter {
   focus(): void;
   insertMarkdown(markdown: string): void;
   getSelectionMarkdown(): string;
-  reveal(target: {line?: number; headingId?: string}): void;
+  reveal(target: RevealTarget): void;
+  openSearch(): void;
+  closeSearch(): void;
   execute(actionId: string, attrs?: Record<string, unknown>): boolean;
 }
 
@@ -128,6 +140,7 @@ declare global {
     fortisDesktop?: DesktopApi;
     __fortisUnsaved?: () => boolean;
     __fortisSaveAll?: () => Promise<boolean>;
+    __fortisPrepareClose?: (discard: boolean) => boolean;
     showOpenFilePicker?: (options?: Record<string, unknown>) => Promise<FileSystemFileHandle[]>;
     showSaveFilePicker?: (options?: Record<string, unknown>) => Promise<FileSystemFileHandle>;
     showDirectoryPicker?: (options?: Record<string, unknown>) => Promise<FileSystemDirectoryHandle>;

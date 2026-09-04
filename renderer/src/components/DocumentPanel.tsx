@@ -1,6 +1,6 @@
 import {useMemo} from 'react';
 import {renderMarkdown} from '../markdown/pipeline';
-import type {DocumentPanel as PanelType, DocumentTab, VersionSnapshot} from '../types';
+import type {DocumentPanel as PanelType, DocumentTab, RevealTarget, VersionSnapshot} from '../types';
 
 const JIRA_TASKS = [
   {key: 'DOCS-142', title: 'Обновить руководство пользователя', status: 'В работе'},
@@ -16,15 +16,17 @@ interface Props {
   onPanel(panel: PanelType): void;
   onInsert(markdown: string): void;
   onRestore(snapshot: VersionSnapshot): void;
-  onReveal(href: string): void;
+  onReveal(target: RevealTarget): void;
+  onClose(): void;
   onOpenRelative(href: string): void;
 }
 
-export function DocumentPanel({tab, panel, jiraBase, versions, onPanel, onInsert, onRestore, onReveal, onOpenRelative}: Props) {
+export function DocumentPanel({tab, panel, jiraBase, versions, onPanel, onInsert, onRestore, onReveal, onOpenRelative, onClose}: Props) {
   const analysis = useMemo(() => renderMarkdown(tab?.markdown || '', jiraBase), [tab?.markdown, jiraBase]);
   const relative = analysis.links.filter((link) => !link.external && /\.(md|markdown)(?:#.*)?$/i.test(link.href));
   return (
     <aside className="document-panel">
+      <div className="panel-header"><div className="panel-title">ДОКУМЕНТ</div><button type="button" className="icon-button" title="Закрыть панель документа" aria-label="Закрыть панель документа" onClick={onClose}>×</button></div>
       <div className="panel-tabs">
         {([['toc', 'Оглавление'], ['links', 'Ссылки'], ['files', 'Файлы'], ['versions', 'Версии'], ['jira', 'Jira']] as const).map(([id, label]) => (
           <button key={id} type="button" className={panel === id ? 'active' : ''} onClick={() => onPanel(id)}>{label}</button>
@@ -32,12 +34,12 @@ export function DocumentPanel({tab, panel, jiraBase, versions, onPanel, onInsert
       </div>
       <div className="panel-scroll">
         {panel === 'toc' ? analysis.headings.map((heading, index) => (
-          <button className="panel-row" style={{paddingLeft: `${10 + (heading.level - 1) * 10}px`}} key={`${heading.href}-${index}`} onClick={() => onReveal(heading.href)}>{heading.title}</button>
+          <button className="panel-row" style={{paddingLeft: `${10 + (heading.level - 1) * 10}px`}} key={`${heading.href}-${index}`} onClick={() => onReveal({headingId: heading.href.replace(/^#/u, ''), line: heading.line, headingIndex: heading.headingIndex})}>{heading.title}</button>
         )) : null}
         {panel === 'links' ? analysis.links.map((link, index) => (
           link.external ? <a className="panel-row link-row" href={link.href} key={`${link.href}-${index}`} target="_blank" rel="noreferrer">
             <span>{link.label || link.href}</span><small>{link.href}</small>
-          </a> : <button type="button" className="panel-row link-row" key={`${link.href}-${index}`} onClick={() => link.href.startsWith('#') ? onReveal(link.href) : onOpenRelative(link.href)}>
+          </a> : <button type="button" className="panel-row link-row" key={`${link.href}-${index}`} onClick={() => link.href.startsWith('#') ? onReveal({headingId: link.href.slice(1)}) : onOpenRelative(link.href)}>
             <span>{link.label || link.href}</span><small>{link.href}</small>
           </button>
         )) : null}
