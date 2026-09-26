@@ -19,7 +19,7 @@ export function resolveNavigation(markdown: string, headings: MarkdownHeading[],
   if (!target.headingId) return target;
   let id = target.headingId;
   try { id = decodeURIComponent(id); } catch { /* literal anchor */ }
-  const heading = headings.find((item) => item.href === `#${id}`);
+  const heading = headings.find((item) => item.href === `#${id}` || item.aliases?.includes(id));
   if (heading) return {...target, headingId: id, line: heading.line, headingIndex: heading.headingIndex};
   for (const token of parser.parse(markdown, {})) {
     if (!token.map || !/<(?:a|h[1-6])\b/iu.test(token.content)) continue;

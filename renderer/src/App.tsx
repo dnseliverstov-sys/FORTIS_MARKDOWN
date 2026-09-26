@@ -8,6 +8,7 @@ import {Modal} from './components/Modal';
 import {TableLab} from './components/TableLab';
 import {FormulaPanel, type FormulaEdit} from './components/FormulaPanel';
 import {CommandMenu} from './components/CommandMenu';
+import {ContextMenu} from './components/ContextMenu';
 import {MarkdownPreview} from './components/MarkdownPreview';
 import type {GravityFormulaTarget} from './editor/gravityBridge';
 import type {MarkdownInsertion} from './editor/gravityBridge';
@@ -40,7 +41,7 @@ interface ImportPreview {
   analysis?: HtmlImportAnalysis;
   result?: ImportResult;
 }
-interface Conflict {id: string; name: string; disk: string; bytes: Uint8Array; lastModified: number; added: number; removed: number}
+interface Conflict {id: string; name: string; added: number; removed: number}
 
 const WORKSPACE_HANDLE_KEY = 'fortis.workspace';
 const VERSIONS_KEY = 'fortis.versions.v2';
@@ -127,7 +128,16 @@ export default function App() {
   recoveryRef.current = recovery;
   const closingRef = useRef(false);
   const [conflict, setConflict] = useState<Conflict | null>(null);
+  const conflictRef = useRef<Conflict | null>(null);
+  const conflictResolving = useRef(false);
+  const showConflict = useCallback((value: Conflict | null) => {
+    conflictRef.current = value;
+    setConflict(value);
+  }, []);
   const [closeCandidate, setCloseCandidate] = useState<DocumentTab | null>(null);
+  const closeQueue = useRef<string[]>([]);
+  const [tabMenu, setTabMenu] = useState<{id: string; x: number; y: number} | null>(null);
+  const dismissTabMenu = useCallback(() => setTabMenu(null), []);
   const [exportFormat, setExportFormat] = useState<'html' | 'pdf' | 'txt'>('html');
   const [exportSelection, setExportSelection] = useState(false);
   const [pageSize, setPageSize] = useState('A4');
@@ -195,6 +205,7 @@ export default function App() {
     tab.handleKey = options.handleKey || (options.handle ? `${name}|h` : undefined);
     if (options.dirty) tab.savedMarkdown = '';
     const runtime = runtimeFor(runtimes.current, tab.id);
+    runtime.diskMarkdown = markdown;
     if (options.handle) {
       runtime.handle = options.handle;
       if (tab.handleKey) void putHandle(tab.handleKey, options.handle);
@@ -251,6 +262,8 @@ export default function App() {
   const saveTab = useCallback(async (id: string, forceSaveAs = false): Promise<boolean> => {
     const tab = sessionRef.current.tabs.find((item) => item.id === id);
     if (!tab) return true;
+    const savingRuntime = runtimeFor(runtimes.current, id);
+    savingRuntime.saving = true;
     try {
       let handle = forceSaveAs ? null : await resolveHandle(tab);
       if (!handle) handle = await pickSaveHandle(tab.name);
@@ -269,6 +282,7 @@ export default function App() {
       }
       const bytes = data instanceof Uint8Array ? data : new TextEncoder().encode(data);
       runtimeFor(runtimes.current, id).originalBytes = bytes;
+      savingRuntime.diskMarkdown = tab.markdown;
       const name = handle?.name || tab.name;
       const handleKey = handle ? `${name}|h` : tab.handleKey;
       if (handle && handleKey) void putHandle(handleKey, handle);
@@ -286,6 +300,8 @@ export default function App() {
     } catch (error) {
       if (!isCanceled(error)) notify(`Не удалось сохранить: ${errorText(error)}`);
       return false;
+    } finally {
+      savingRuntime.saving = false;
     }
   }, [notify, patchTab, resolveHandle, snapshot]);
 
@@ -354,8 +370,7 @@ export default function App() {
     }
   }, [addDocument, notify]);
 
-  const closeTab = useCallback((tab: DocumentTab) => {
-    if (tab.dirty) { setCloseCandidate(tab); return; }
+  const removeTab = useCallback((tab: DocumentTab) => {
     setSession((current) => {
       const index = current.tabs.findIndex((item) => item.id === tab.id);
       const tabs = current.tabs.filter((item) => item.id !== tab.id);
@@ -364,7 +379,26 @@ export default function App() {
     });
     adapters.current.delete(tab.id);
     runtimes.current.delete(tab.id);
-  }, []);
+    if (conflictRef.current?.id === tab.id) showConflict(null);
+  }, [setSession, showConflict]);
+
+  const continueClosing = useCallback(() => {
+    setCloseCandidate(null);
+    while (closeQueue.current.length) {
+      const id = closeQueue.current.shift();
+      const tab = sessionRef.current.tabs.find((item) => item.id === id);
+      if (!tab) continue;
+      if (tab.dirty) {setCloseCandidate(tab); return;}
+      removeTab(tab);
+    }
+  }, [removeTab]);
+
+  const closeTabs = useCallback((ids: string[]) => {
+    closeQueue.current = ids;
+    continueClosing();
+  }, [continueClosing]);
+  const closeTab = useCallback((tab: DocumentTab) => closeTabs([tab.id]), [closeTabs]);
+  const cancelClosing = () => {closeQueue.current = []; setCloseCandidate(null);};
 
   const setViewMode = useCallback((viewMode: ViewMode) => {
     setSession((current) => ({...current, settings: {...current.settings, viewMode}}));
@@ -530,6 +564,30 @@ export default function App() {
     });
   }, []);
 
+  const workspaceHandle = workspace?.handle;
+  useEffect(() => {
+    if (workspaceHandle?.kind !== 'directory') return;
+    const handle = workspaceHandle as FileSystemDirectoryHandle;
+    let disposed = false;
+    let busy = false;
+    const sameTree = (left: WorkspaceNode[], right: WorkspaceNode[]): boolean => left.length === right.length
+      && left.every((node, index) => node.key === right[index].key && node.type === right[index].type
+        && sameTree(node.children || [], right[index].children || []));
+    const refresh = async () => {
+      if (busy || disposed) return;
+      busy = true;
+      try {
+        const children = await walkDirectory(handle, 0, handle.name);
+        if (!disposed) setWorkspace((current) => current?.handle === handle && !sameTree(current.children || [], children)
+          ? {...current, children} : current);
+      } catch { /* Preserve the tree while its directory is temporarily unavailable. */ }
+      finally {busy = false;}
+    };
+    const poll = window.setInterval(() => void refresh(), 2000);
+    window.addEventListener('focus', refresh);
+    return () => {disposed = true; window.clearInterval(poll); window.removeEventListener('focus', refresh);};
+  }, [workspaceHandle]);
+
   useEffect(() => {
     if (window.fortisDesktop) window.fortisDesktop.setZoomFactor(session.settings.zoom);
     else document.documentElement.style.zoom = String(session.settings.zoom);
@@ -578,30 +636,65 @@ export default function App() {
   }, [snapshot]);
 
   useEffect(() => {
+    let busy = false;
+    let disposed = false;
     const poll = window.setInterval(async () => {
-      if (conflict || recovery) return;
-      for (const tab of sessionRef.current.tabs) {
-        const handle = runtimes.current.get(tab.id)?.handle;
-        if (!handle) continue;
-        try {
-          const file = await handle.getFile();
-          const runtime = runtimeFor(runtimes.current, tab.id);
-          const known = runtime.lastModified;
-          if (!known) {runtime.lastModified = file.lastModified; continue;}
-          if (file.lastModified <= known) continue;
-          const bytes = new Uint8Array(await file.arrayBuffer());
-          const disk = new TextDecoder().decode(bytes);
-          if (disk !== tab.markdown) setConflict({id: tab.id, name: tab.name, disk, bytes, lastModified: file.lastModified, ...diffCount(tab.markdown, disk)});
-          else {
+      if (busy || recoveryRef.current || conflictResolving.current) return;
+      busy = true;
+      try {
+        for (const candidate of sessionRef.current.tabs) {
+          if (conflictRef.current && conflictRef.current.id !== candidate.id) continue;
+          const runtime = runtimes.current.get(candidate.id);
+          const handle = runtime?.handle;
+          if (!handle || !runtime || runtime.saving) continue;
+          try {
+            const known = runtime.lastModified;
+            const file = await handle.getFile();
+            if (known === file.lastModified) continue;
+            const bytes = new Uint8Array(await file.arrayBuffer());
+            if (disposed || conflictResolving.current || runtime.saving || runtime.lastModified !== known) continue;
+            const tab = sessionRef.current.tabs.find((item) => item.id === candidate.id);
+            if (!tab) continue;
+            const disk = new TextDecoder().decode(bytes);
+            // Acknowledge observations immediately: cancel does not enqueue this version again.
             runtime.lastModified = file.lastModified;
-            runtime.originalBytes = bytes;
-          }
-          break;
-        } catch { /* file disappeared */ }
-      }
+            const changed = disk !== runtime.diskMarkdown;
+            runtime.diskMarkdown = disk;
+            if (disk === tab.markdown) {
+              runtime.originalBytes = bytes;
+              if (conflictRef.current?.id === tab.id) showConflict(null);
+            } else if (changed) {
+              showConflict({id: tab.id, name: tab.name, ...diffCount(tab.markdown, disk)});
+            }
+            if (conflictRef.current) break;
+          } catch { /* file disappeared */ }
+        }
+      } finally {busy = false;}
     }, 4000);
-    return () => window.clearInterval(poll);
-  }, [conflict, recovery]);
+    return () => {disposed = true; window.clearInterval(poll);};
+  }, [showConflict]);
+
+  const resolveConflict = async (fromDisk: boolean) => {
+    const current = conflictRef.current;
+    if (!current || conflictResolving.current) return;
+    conflictResolving.current = true;
+    try {
+      if (fromDisk) {
+        const runtime = runtimes.current.get(current.id);
+        if (!runtime?.handle) return;
+        // Read at acceptance time, including saves made since the last poll.
+        const opened = await readHandle(runtime.handle);
+        if (!sessionRef.current.tabs.some((tab) => tab.id === current.id)) return;
+        snapshot(current.id, 'перед версией с диска');
+        runtime.originalBytes = opened.bytes;
+        runtime.lastModified = opened.file.lastModified;
+        runtime.diskMarkdown = opened.markdown;
+        patchTab(current.id, (tab) => ({markdown: opened.markdown, savedMarkdown: opened.markdown, dirty: false, touched: false, savedAt: opened.file.lastModified, revision: tab.revision + 1}));
+      } else if (!await saveTab(current.id)) return;
+      showConflict(null);
+    } catch (error) {notify(`Не удалось прочитать файл: ${errorText(error)}`);}
+    finally {conflictResolving.current = false;}
+  };
 
   useEffect(() => {
     const controller = new AbortController();
@@ -780,7 +873,12 @@ export default function App() {
       {formulaEdit ? <FormulaPanel edit={formulaEdit} onClose={() => setFormulaEdit(null)} /> : null}
 
       <div className="tabs-bar">
-        {session.tabs.map((tab) => <button type="button" className={`file-tab${tab.id === session.activeId ? ' active' : ''}`} key={tab.id} onClick={() => setSession((current) => ({...current, activeId: tab.id}))}>
+        {session.tabs.map((tab) => <button type="button" className={`file-tab${tab.id === session.activeId ? ' active' : ''}`} key={tab.id} onClick={() => setSession((current) => ({...current, activeId: tab.id}))}
+          onContextMenu={(event) => {
+            event.preventDefault();
+            setSession((current) => ({...current, activeId: tab.id}));
+            setTabMenu({id: tab.id, x: event.clientX, y: event.clientY});
+          }}>
           <span>{tab.dirty ? '● ' : ''}{tab.name}</span><i role="button" aria-label={`Закрыть ${tab.name}`} onClick={(event) => {event.stopPropagation(); closeTab(tab);}}>×</i>
         </button>)}
         {!session.tabs.length ? <button type="button" className="new-empty-tab" onClick={() => addDocument('Без имени.md', '', {dirty: true})}>＋ Новый документ</button> : null}
@@ -844,6 +942,15 @@ export default function App() {
       </footer>
 
       {toast ? <div className="fortis-toast">{toast}</div> : null}
+      {tabMenu ? <ContextMenu x={tabMenu.x} y={tabMenu.y} label="Действия с вкладками" onClose={dismissTabMenu} items={[
+        {label: 'Закрыть все', run: () => closeTabs(session.tabs.map((tab) => tab.id))},
+        {label: 'Закрыть все вкладки слева', disabled: session.tabs.findIndex((tab) => tab.id === tabMenu.id) <= 0,
+          run: () => closeTabs(session.tabs.slice(0, session.tabs.findIndex((tab) => tab.id === tabMenu.id)).map((tab) => tab.id))},
+        {label: 'Закрыть все вкладки справа', disabled: session.tabs.findIndex((tab) => tab.id === tabMenu.id) === session.tabs.length - 1,
+          run: () => closeTabs(session.tabs.slice(session.tabs.findIndex((tab) => tab.id === tabMenu.id) + 1).map((tab) => tab.id))},
+        {label: 'Закрыть все кроме активной вкладки', disabled: session.tabs.length < 2,
+          run: () => closeTabs(session.tabs.filter((tab) => tab.id !== tabMenu.id).map((tab) => tab.id))},
+      ]} /> : null}
 
       {dialog === 'themes' ? <Modal title="Оформление" onClose={() => setDialog(null)} wide><div className="theme-grid">{THEMES.map((item) => <button type="button" key={item.id} className={item.id === theme.id ? 'selected' : ''} onClick={() => setSession((current) => ({...current, settings: {...current.settings, theme: item.id}}))}><span style={{background: item.background, borderColor: item.edge}}><i style={{background: item.accent}} /></span><strong>{item.name}</strong><small>{item.gravity === 'dark' ? 'тёмная' : 'светлая'}</small></button>)}</div></Modal> : null}
 
@@ -907,16 +1014,9 @@ export default function App() {
 
       {recovery ? <Modal title="Восстановить черновики?" onClose={() => finishRecovery(false)} footer={<><Button onClick={() => finishRecovery(false)}>Не восстанавливать</Button><Button view="action" onClick={() => finishRecovery(true)}>Восстановить</Button></>}><p>После предыдущего запуска остались несохранённые документы от {new Date(recovery.ts).toLocaleString('ru-RU')}.</p><ul>{recovery.tabs.map((tab, index) => <li key={tab.id || index}>{tab.name}</li>)}</ul></Modal> : null}
 
-      {conflict ? <Modal title="Файл изменён на диске" onClose={() => setConflict(null)} footer={<><Button onClick={() => setConflict(null)}>Отмена</Button><Button onClick={() => {setConflict(null); void saveTab(conflict.id);}}>Оставить мою версию</Button><Button view="action" onClick={() => {
-        snapshot(conflict.id, 'перед версией с диска');
-        const runtime = runtimeFor(runtimes.current, conflict.id);
-        runtime.originalBytes = conflict.bytes;
-        runtime.lastModified = conflict.lastModified;
-        patchTab(conflict.id, (tab) => ({markdown: conflict.disk, savedMarkdown: conflict.disk, dirty: false, touched: false, savedAt: conflict.lastModified, revision: tab.revision + 1}));
-        setConflict(null);
-      }}>Взять с диска</Button></>}><p>«{conflict.name}» изменён другой программой: добавлено строк — {conflict.added}, удалено — {conflict.removed}.</p></Modal> : null}
+      {conflict ? <Modal title="Файл изменён на диске" onClose={() => showConflict(null)} footer={<><Button onClick={() => showConflict(null)}>Отмена</Button><Button onClick={() => void resolveConflict(false)}>Оставить мою версию</Button><Button view="action" onClick={() => void resolveConflict(true)}>Взять с диска</Button></>}><p>«{conflict.name}» изменён другой программой: добавлено строк — {conflict.added}, удалено — {conflict.removed}.</p></Modal> : null}
 
-      {closeCandidate ? <Modal title="Есть несохранённые изменения" onClose={() => setCloseCandidate(null)} footer={<><Button onClick={() => setCloseCandidate(null)}>Отмена</Button><Button onClick={() => {const tab = closeCandidate; setCloseCandidate(null); patchTab(tab.id, {dirty: false}); queueMicrotask(() => closeTab({...tab, dirty: false}));}}>Не сохранять</Button><Button view="action" onClick={async () => {if (await saveTab(closeCandidate.id)) {const tab = {...closeCandidate, dirty: false}; setCloseCandidate(null); closeTab(tab);}}}>Сохранить</Button></>}><p>Сохранить изменения в «{closeCandidate.name}» перед закрытием?</p></Modal> : null}
+      {closeCandidate ? <Modal title="Есть несохранённые изменения" onClose={cancelClosing} footer={<><Button onClick={cancelClosing}>Отмена</Button><Button onClick={() => {removeTab(closeCandidate); continueClosing();}}>Не сохранять</Button><Button view="action" onClick={async () => {if (await saveTab(closeCandidate.id)) {removeTab(closeCandidate); continueClosing();}}}>Сохранить</Button></>}><p>Сохранить изменения в «{closeCandidate.name}» перед закрытием?</p></Modal> : null}
     </div>
     </ThemeProvider>
   );

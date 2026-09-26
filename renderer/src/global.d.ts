@@ -7,3 +7,9 @@ declare module 'turndown-plugin-gfm' {
 }
 
 declare module '@diplodoc/latex-extension/runtime/styles';
+declare module 'github-slugger' {
+  export default class GithubSlugger {
+    slug(value: string, maintainCase?: boolean): string;
+    reset(): void;
+  }
+}

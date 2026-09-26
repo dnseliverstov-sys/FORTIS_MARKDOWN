@@ -10,12 +10,13 @@ let page: Page;
 let root: string;
 let userData: string;
 let errors: string[];
+type MenuTestGlobal = typeof globalThis & {__fortisTestMenu?: import('electron').Menu};
 
 async function launch() {
   app = await electron.launch({args: [path.resolve('app/main.js')], env: {...globalThis.process.env, FORTIS_E2E_ROOT: root, FORTIS_E2E_USER_DATA: userData}});
   electronProcess = app.process();
   page = await app.firstWindow();
-  page.on('pageerror', (error) => errors.push(error.message));
+  page.on('pageerror', (error) => errors.push(error.stack || error.message));
   await expect(page.locator('.brand')).toContainText('FORTIS');
   await expect(page.locator('.editor-pane:not([hidden]) .ProseMirror')).toBeVisible();
 }
@@ -210,4 +211,177 @@ test('outline reveals repeated headings, Setext and explicit anchors in all mode
   await page.locator('.document-panel').getByRole('button', {name: /К разделу/}).click();
   await expect(page.locator('.editor-pane:not([hidden]) .ProseMirror h2').nth(1)).toBeInViewport();
   await expect.poll(async () => (await storedTabs()).find((tab) => tab.name === 'outline.md')?.dirty).toBe(false);
+});
+
+test('tab context menu closes groups and stops at unsaved documents without losing changes', async () => {
+  for (const name of ['left.md', 'middle.md', 'right.md']) await openFile(name, `# ${name}\n`);
+  const middle = page.locator('.file-tab').filter({hasText: 'middle.md'});
+  await middle.click({button: 'right'});
+  await page.getByRole('menuitem', {name: 'Закрыть все вкладки справа', exact: true}).click();
+  await expect(page.locator('.file-tab').filter({hasText: 'right.md'})).toHaveCount(0);
+  await middle.click({button: 'right'});
+  await page.getByRole('menuitem', {name: 'Закрыть все вкладки слева', exact: true}).click();
+  await expect(page.locator('.file-tab')).toHaveCount(1);
+  await openFile('dirty.md', 'Исходный текст\n');
+  await page.locator('.editor-pane:not([hidden]) .ProseMirror').click();
+  await page.keyboard.press('Control+End');
+  await page.keyboard.insertText(' изменено');
+  await middle.click({button: 'right'});
+  await page.getByRole('menuitem', {name: 'Закрыть все кроме активной вкладки', exact: true}).click();
+  const dialog = page.getByRole('dialog', {name: 'Есть несохранённые изменения'});
+  await expect(dialog).toContainText('dirty.md');
+  await dialog.getByRole('button', {name: 'Отмена', exact: true}).click();
+  await expect(page.locator('.file-tab')).toHaveCount(2);
+  await middle.click({button: 'right'});
+  await page.getByRole('menuitem', {name: 'Закрыть все кроме активной вкладки', exact: true}).click();
+  await dialog.getByRole('button', {name: 'Сохранить', exact: true}).click();
+  await expect(page.locator('.file-tab')).toHaveCount(1);
+  expect(fs.readFileSync(path.join(root, 'dirty.md'), 'utf8')).toContain('изменено');
+  await middle.click({button: 'right'});
+  await page.getByRole('menuitem', {name: 'Закрыть все', exact: true}).click();
+  await expect(page.locator('.file-tab')).toHaveCount(0);
+});
+
+test('restored tab menus and dialogs stay above the editor toolbar', async ({}, info) => {
+  await openFile('first.md', '# Первый документ\n');
+  await openFile('second.md', '# Второй документ\n');
+  await closeNormally();
+  await launch();
+  const firstTab = page.locator('.file-tab').filter({hasText: 'first.md'});
+  await firstTab.click({button: 'right'});
+  const menu = page.getByRole('menu', {name: 'Действия с вкладками'});
+  await expect(menu).toBeVisible();
+  await expect.poll(() => menu.evaluate((node) => Array.from(node.querySelectorAll('button')).flatMap((item) => {
+    const rect = item.getBoundingClientRect();
+    const covered = [rect.top + 3, rect.top + rect.height / 2, rect.bottom - 3].some((y) =>
+      !item.contains(document.elementFromPoint(rect.left + rect.width / 2, y)));
+    return covered ? [item.textContent] : [];
+  }))).toEqual([]);
+  await page.screenshot({path: info.outputPath('tab-menu-above-toolbar.png')});
+  await page.keyboard.press('Escape');
+  await page.getByTitle('Настройки Jira/Bitbucket', {exact: true}).click();
+  const dialog = page.getByRole('dialog', {name: 'Интеграции и настройки'});
+  await expect(dialog).toBeVisible();
+  const toolbar = page.locator('.editor-pane:not([hidden]) [data-layout="sticky-toolbar"]').first();
+  await expect.poll(() => toolbar.evaluate((node) => {
+    const rect = node.getBoundingClientRect();
+    return Boolean(document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2)?.closest('.modal-backdrop'));
+  })).toBe(true);
+  await dialog.getByRole('button', {name: 'Закрыть', exact: true}).click();
+  await firstTab.click({button: 'right'});
+  // Exercise the top command which the toolbar previously intercepted.
+  await menu.getByRole('menuitem', {name: 'Закрыть все', exact: true}).click();
+  await expect(page.locator('.file-tab')).toHaveCount(0);
+});
+
+test('external saves are coalesced, cancellation is remembered and acceptance reads the latest file', async () => {
+  await openFile('disk.md', '# Начало\n');
+  const file = path.join(root, 'disk.md');
+  const dialog = page.getByRole('dialog', {name: 'Файл изменён на диске'});
+  fs.writeFileSync(file, '# Первая\n');
+  await expect(dialog).toBeVisible();
+  fs.writeFileSync(file, '# Вторая\n\nновая строка\n');
+  await expect(dialog).toContainText('добавлено строк — 3');
+  await dialog.getByRole('button', {name: 'Отмена', exact: true}).click();
+  await page.waitForTimeout(4500);
+  await expect(dialog).toBeHidden();
+  // Rewriting identical content should not prompt again either.
+  fs.writeFileSync(file, '# Вторая\n\nновая строка\n');
+  await page.waitForTimeout(4500);
+  await expect(dialog).toBeHidden();
+  fs.writeFileSync(file, '# Третья\n');
+  await expect(dialog).toBeVisible();
+  fs.writeFileSync(file, '# Самая свежая\n');
+  await dialog.getByRole('button', {name: 'Взять с диска', exact: true}).click();
+  await expect(page.locator('.editor-pane:not([hidden]) .ProseMirror')).toContainText('Самая свежая');
+  await page.waitForTimeout(4500);
+  await expect(dialog).toBeHidden();
+});
+
+test('workspace refreshes additions, deletions and renames while preserving collapsed folders', async () => {
+  fs.mkdirSync(path.join(root, 'nested'));
+  fs.writeFileSync(path.join(root, 'nested', 'old.md'), '# Старый\n');
+  await page.locator('.actionbar').getByRole('button', {name: 'Открыть папку', exact: true}).click();
+  const tree = page.locator('.workspace-tree');
+  await expect(tree).toContainText('old.md');
+  await tree.getByRole('button', {name: /nested/}).click();
+  fs.writeFileSync(path.join(root, 'new.md'), '# Новый\n');
+  fs.renameSync(path.join(root, 'nested', 'old.md'), path.join(root, 'nested', 'renamed.md'));
+  await expect(tree).toContainText('new.md');
+  await expect(tree.getByRole('button', {name: /nested/}).locator('.tree-icon')).toHaveText('▸');
+  await tree.getByRole('button', {name: /nested/}).click();
+  await expect(tree).toContainText('renamed.md');
+  await expect(tree).not.toContainText('old.md');
+  fs.unlinkSync(path.join(root, 'new.md'));
+  await expect(tree).not.toContainText('new.md');
+});
+
+test('separator stays on the wide toolbar and remains accessible when it shrinks', async () => {
+  for (const mode of ['Визуально', 'Разметка']) {
+    await page.getByRole('button', {name: mode, exact: true}).click();
+    await app.evaluate(({BrowserWindow}) => BrowserWindow.getAllWindows()[0].setSize(1500, 900));
+    const toolbar = page.locator('.editor-pane:not([hidden]) [data-layout="sticky-toolbar"]');
+    await expect(page.locator('.editor-pane:not([hidden])').getByRole('button', {name: 'Разделитель', exact: true})).toBeVisible();
+    await app.evaluate(({BrowserWindow}) => BrowserWindow.getAllWindows()[0].setSize(960, 650));
+    const panelToggle = page.locator('.top-actions').getByRole('button', {name: 'Панель документа', exact: true});
+    if (await panelToggle.getAttribute('aria-pressed') !== 'true') await panelToggle.click();
+    await expect(toolbar).toBeVisible();
+    const button = page.locator('.editor-pane:not([hidden])').getByRole('button', {name: 'Разделитель', exact: true});
+    if (await button.isVisible()) await button.click();
+    else {
+      await toolbar.getByRole('button').last().click();
+      await page.getByText('Разделитель', {exact: true}).click();
+    }
+    await expect(page.locator('.file-tab.active')).toContainText('●');
+  }
+});
+
+test('TOC links navigate inside rendered text and preview without modifying Markdown', async () => {
+  const spacer = Array.from({length: 40}, (_, i) => `Абзац ${i}\n\n`).join('');
+  const markdown = `# Начало\n\n[Синтаксис](#21-синтаксис-полей)\n\n[Повторный](#повтор-1)\n\n${spacer}## 2\\.1. Синтаксис полей\n\n${spacer}## Повтор\n\n${spacer}## Повтор\n`;
+  await openFile('toc.md', markdown);
+  for (const mode of ['Визуально', 'Рядом']) {
+    await page.getByRole('button', {name: mode, exact: true}).click();
+    const content = page.locator(mode === 'Визуально' ? '.editor-pane:not([hidden]) .ProseMirror' : '.editor-pane:not([hidden]) .fortis-preview');
+    await content.getByRole('link', {name: 'Синтаксис', exact: true}).click();
+    await expect(content.locator('h2').first()).toBeInViewport();
+    await content.getByRole('link', {name: 'Повторный', exact: true}).click();
+    await expect(content.locator('h2').last()).toBeInViewport();
+    expect(page.url()).toBe('fortis://app/index.html');
+  }
+  await expect.poll(async () => (await storedTabs()).find((tab) => tab.name === 'toc.md')?.markdown).toBe(markdown);
+  await expect.poll(async () => (await storedTabs()).find((tab) => tab.name === 'toc.md')?.dirty).toBe(false);
+});
+
+test('native context menu copies, cuts and pastes in both editor modes', async () => {
+  await app.evaluate(({Menu}) => {
+    Menu.prototype.popup = function () {(globalThis as MenuTestGlobal).__fortisTestMenu = this;};
+  });
+  for (const mode of ['Визуально', 'Разметка']) {
+    await openFile(`clipboard-${mode}.md`, 'Текст для буфера\n');
+    await page.getByRole('button', {name: mode, exact: true}).click();
+    const content = page.locator(mode === 'Визуально' ? '.editor-pane:not([hidden]) .ProseMirror' : '.editor-pane:not([hidden]) .cm-content');
+    await content.click();
+    await page.keyboard.press('Control+a');
+    await content.locator(mode === 'Визуально' ? 'p' : '.cm-line').first().click({button: 'right', position: {x: 12, y: 8}});
+    await expect.poll(() => app.evaluate(() => (globalThis as MenuTestGlobal).__fortisTestMenu?.items.map((item) => item.label))).toEqual(['Скопировать', 'Вырезать', 'Вставить']);
+    const invoke = async (label: string) => app.evaluate(({BrowserWindow}, name) => {
+      const menu = (globalThis as MenuTestGlobal).__fortisTestMenu;
+      const item = menu?.items.find((item) => item.label === name);
+      if (!item?.enabled) throw new Error(`Disabled clipboard action: ${name}`);
+      // Electron dispatches built-in roles in native code, outside MenuItem.click.
+      const contents = BrowserWindow.getAllWindows()[0].webContents;
+      if (item.role === 'copy') contents.copy();
+      else if (item.role === 'cut') contents.cut();
+      else if (item.role === 'paste') contents.paste();
+      else throw new Error(`Unexpected clipboard role: ${item.role}`);
+    }, label);
+    await invoke('Скопировать');
+    await expect.poll(() => app.evaluate(({clipboard}) => clipboard.readText())).toContain('Текст для буфера');
+    await invoke('Вырезать');
+    await expect(content).not.toContainText('Текст для буфера');
+    await content.click({button: 'right'});
+    await invoke('Вставить');
+    await expect(content).toContainText('Текст для буфера');
+  }
 });

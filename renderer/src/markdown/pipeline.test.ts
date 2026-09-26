@@ -3,6 +3,26 @@ import {buildExportHtml, renderMarkdown, sanitizeHtml} from './pipeline';
 import {resolveNavigation} from './navigation';
 
 describe('portable markdown pipeline', () => {
+  it('resolves VS Code TOC fragments with Cyrillic, punctuation, inline code and repeated headings', () => {
+    const md = [
+      '# Правила оформления реестров миграции схем (TARGET-PLAN)',
+      '## 2\\. ASCII-диаграмма структуры',
+      '### 2\\.1. Синтаксис полей',
+      '### 2.6. Старое состояние поля `| Было: ...`',
+      '### Шаг 1. Текущая схема: `original/<MODEL>-request-schema.json`',
+      '## Повтор', '## Повтор',
+    ].join('\n\n');
+    const result = renderMarkdown(md);
+    const ids = ['правила-оформления-реестров-миграции-схем-target-plan', '2-ascii-диаграмма-структуры',
+      '21-синтаксис-полей', '26-старое-состояние-поля--было-',
+      'шаг-1-текущая-схема-originalmodel-request-schemajson', 'повтор', 'повтор-1'];
+    const dom = new DOMParser().parseFromString(result.html, 'text/html');
+    ids.forEach((id, index) => {
+      expect(resolveNavigation(md, result.headings, {headingId: encodeURIComponent(id)})).toMatchObject({line: index * 2, headingIndex: index});
+      expect(dom.getElementById(id)).not.toBeNull();
+    });
+    expect(result.headings[0].title).toBe('Правила оформления реестров миграции схем (TARGET-PLAN)');
+  });
   it('locates repeated Cyrillic and Setext headings and explicit anchors', () => {
     const md = '# Заголовок\n\n## Повтор\n\nтекст\n\n<a id="явный"></a>\n\nПовтор\n------\n';
     const headings = renderMarkdown(md).headings;

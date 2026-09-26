@@ -70,7 +70,8 @@ button { color: inherit; }
 .left-pane { border-right: 1px solid var(--fortis-edge); display: grid; grid-template-rows: minmax(0, 1fr) auto; }
 .right-pane { border-left: 1px solid var(--fortis-edge); }
 .left-pane[hidden] { display: none; }
-.editor-area { min-width: 0; min-height: 0; flex: 1; position: relative; background: var(--fortis-bg); }
+/* Keep Gravity's sticky toolbar layers inside the editor, below app menus and dialogs. */
+.editor-area { min-width: 0; min-height: 0; flex: 1; position: relative; isolation: isolate; background: var(--fortis-bg); }
 .editor-pane { position: absolute; inset: 0; min-width: 0; min-height: 0; overflow: hidden; }
 .editor-pane[hidden] { display: none; }
 .fortis-gravity-editor { height: 100%; background: var(--fortis-document); color: var(--fortis-text); --g-md-editor-padding: 0; --g-md-editor-max-width: none; }
@@ -120,6 +121,9 @@ button { color: inherit; }
 .mode-switch button.active { background: color-mix(in srgb, var(--fortis-accent) 22%, transparent); color: var(--fortis-text); }
 
 .fortis-preview { height: 100%; overflow: auto; background: var(--fortis-document); }
+/* The custom preview owns scrolling. Gravity's outer scroller expects its own .line markers. */
+.fortis-gravity-editor .g-md-markup-preview__outer { display: flex; flex-direction: column; overflow: clip; }
+.fortis-gravity-editor .g-md-markup-preview__outer > .fortis-preview { flex: 1; min-height: 0; }
 .fortis-document { max-width: none; min-height: 100%; margin: 0; padding: 24px 20px 100px; font-size: 15px; line-height: 1.75; color: var(--fortis-text); }
 :is(.fortis-document, .fortis-gravity-editor .ProseMirror) h1,
 :is(.fortis-document, .fortis-gravity-editor .ProseMirror) h2,
@@ -212,6 +216,10 @@ button { color: inherit; }
 .shortcut-grid small, .toolbar-config small { color: var(--fortis-muted); font-size: 9px; }
 .shortcut-grid input { height: 29px; padding: 0 7px; border: 1px solid var(--fortis-edge); border-radius: 5px; outline: 0; background: var(--fortis-bg); color: var(--fortis-text); text-align: center; }
 .shortcut-grid input:focus { border-color: var(--fortis-accent); }
+.fortis-context-menu { position: fixed; z-index: 1500; min-width: 230px; padding: 5px; border: 1px solid var(--fortis-edge); border-radius: 6px; background: var(--fortis-bg); color: var(--fortis-text); box-shadow: 0 6px 24px #0004; }
+.fortis-context-menu button { display: block; width: 100%; padding: 8px 12px; border: 0; border-radius: 3px; background: transparent; color: inherit; text-align: left; cursor: pointer; }
+.fortis-context-menu button:is(:hover, :focus-visible) { background: var(--fortis-edge); outline: none; }
+.fortis-context-menu button:disabled { opacity: .4; cursor: default; }
 .toolbar-config { display: grid; grid-template-columns: 1fr 1fr; gap: 5px 14px; }
 .toolbar-config label { display: grid; grid-template-columns: 18px 24px minmax(100px, 1fr) auto; align-items: center; min-height: 28px; gap: 5px; font-size: 11px; }
 .fortis-toast { position: fixed; z-index: 1200; right: 18px; bottom: 42px; max-width: 460px; padding: 10px 14px; border: 1px solid var(--fortis-edge); border-radius: var(--fortis-radius); background: var(--fortis-surface); box-shadow: 0 12px 30px rgb(0 0 0 / .35); font-size: 12px; }

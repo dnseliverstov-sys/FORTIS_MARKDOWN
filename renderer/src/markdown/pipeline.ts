@@ -3,6 +3,7 @@ import transform from '@diplodoc/transform';
 import {transform as latexTransform} from '@diplodoc/latex-extension';
 import {transform as mermaidTransform} from '@diplodoc/mermaid-extension';
 import katex from 'katex';
+import GithubSlugger from 'github-slugger';
 import type {AssetResolver, MarkdownAnalysis, MarkdownHeading, MarkdownLink} from '../types';
 import {ALERT_TYPES, PORTABLE_MARKDOWN_POLICY} from './policy';
 import {SELF_CONTAINED_KATEX_CSS} from './katexExport';
@@ -174,15 +175,27 @@ export function renderMarkdown(markdown: string, jiraBase = ''): MarkdownAnalysi
   const cleanTemplate = document.createElement('template');
   cleanTemplate.innerHTML = clean;
   const sourceLines = headingLines(markdown);
+  const slugger = new GithubSlugger();
+  const elements = Array.from(cleanTemplate.content.querySelectorAll<HTMLElement>('h1,h2,h3,h4,h5,h6'));
+  const githubIds = elements.map((heading) => slugger.slug(heading.textContent || ''));
+  const reservedIds = new Set([...githubIds, ...Array.from(cleanTemplate.content.querySelectorAll('[id]')).map((node) => node.id)]);
   const usedIds = new Set<string>();
-  const headings: MarkdownHeading[] = Array.from(cleanTemplate.content.querySelectorAll<HTMLElement>('h1,h2,h3,h4,h5,h6')).map((heading, index) => {
-    const base = heading.id || `h-${(heading.textContent || 'section').toLocaleLowerCase('ru').replace(/[^a-zа-яё0-9]+/giu, '-').replace(/^-|-$/g, '') || index + 1}`;
+  const headings: MarkdownHeading[] = elements.map((heading, index) => {
+    const base = heading.id || githubIds[index];
     let id = base;
-    let suffix = 2;
+    let suffix = 1;
     while (usedIds.has(id)) id = `${base}-${suffix++}`;
     usedIds.add(id);
     heading.id = id;
-    return {level: Number(heading.tagName.slice(1)), title: heading.textContent || '', href: `#${id}`, line: sourceLines[index], headingIndex: index};
+    const legacy = `h-${(heading.textContent || 'section').toLocaleLowerCase('ru').replace(/[^a-zа-яё0-9]+/giu, '-').replace(/^-|-$/g, '') || index + 1}`;
+    const aliases = [githubIds[index], legacy].filter((alias, i, all) => alias !== id && all.indexOf(alias) === i && !usedIds.has(alias) && (!reservedIds.has(alias) || alias === githubIds[index]));
+    for (const alias of aliases) {
+      const anchor = document.createElement('span');
+      anchor.id = alias;
+      heading.prepend(anchor);
+      usedIds.add(alias);
+    }
+    return {level: Number(heading.tagName.slice(1)), title: heading.textContent || '', href: `#${id}`, aliases, line: sourceLines[index], headingIndex: index};
   });
   clean = cleanTemplate.innerHTML;
   const links: MarkdownLink[] = Array.from(cleanTemplate.content.querySelectorAll<HTMLAnchorElement>('a[href]')).map((link) => ({

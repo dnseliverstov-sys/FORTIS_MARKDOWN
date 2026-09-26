@@ -19,6 +19,8 @@ export interface DocumentRuntime {
   handle?: FileSystemFileHandle;
   originalBytes?: Uint8Array;
   lastModified?: number;
+  diskMarkdown?: string;
+  saving?: boolean;
   assetToken?: string;
 }
 
@@ -87,6 +89,7 @@ export interface MarkdownHeading {
   href: string;
   line?: number;
   headingIndex?: number;
+  aliases?: string[];
 }
 
 export interface MarkdownLink {

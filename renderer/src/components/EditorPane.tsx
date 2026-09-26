@@ -28,6 +28,7 @@ import {
   refreshGravityView,
 } from '../editor/gravityBridge';
 import {DocumentSync} from '../editor/documentSync';
+import {fortisToolbar} from '../editor/toolbar';
 import {renderMarkdown} from '../markdown/pipeline';
 import {resolveNavigation} from '../markdown/navigation';
 import type {MarkdownInsertion} from '../editor/gravityBridge';
@@ -207,6 +208,17 @@ export function EditorPane({tab, viewMode, jiraBase, theme, active, toolbarVisib
     suppress.current = false;
   }, [editor, tab.markdown, tab.revision]);
 
+  const reveal = useCallback((target: Parameters<EditorAdapter['reveal']>[0]) => {
+    const markdown = sync.current.source;
+    const resolved = resolveNavigation(markdown, renderMarkdown(markdown).headings, target);
+    scrollLock.current = true;
+    revealGravityTarget(editor, resolved);
+    if (resolved.headingId && editor.currentMode === 'markup' && rootRef.current?.querySelector('.fortis-preview')) {
+      pendingPreview.current = resolved.headingId;
+      requestAnimationFrame(() => requestAnimationFrame(revealPreview));
+    } else requestAnimationFrame(() => requestAnimationFrame(() => {scrollLock.current = false;}));
+  }, [editor, revealPreview]);
+
   useEffect(() => {
     const adapter: EditorAdapter = {
       getMarkdown: () => sync.current.source,
@@ -222,16 +234,7 @@ export function EditorPane({tab, viewMode, jiraBase, theme, active, toolbarVisib
       getSelectionMarkdown: () => getGravitySelectionMarkdown(editor),
       openSearch: () => openGravitySearch(editor),
       closeSearch: () => closeGravitySearch(editor),
-      reveal(target) {
-        const markdown = sync.current.source;
-        const resolved = resolveNavigation(markdown, renderMarkdown(markdown).headings, target);
-        scrollLock.current = true;
-        revealGravityTarget(editor, resolved);
-        if (resolved.headingId && editor.currentMode === 'markup' && rootRef.current?.querySelector('.fortis-preview')) {
-          pendingPreview.current = resolved.headingId;
-          requestAnimationFrame(() => requestAnimationFrame(revealPreview));
-        } else requestAnimationFrame(() => requestAnimationFrame(() => {scrollLock.current = false;}));
-      },
+      reveal,
       execute(actionId, attrs) {
         if (actionId === 'insertFormula') return insertGravityFormula(editor, String(attrs?.tex || ''), Boolean(attrs?.block));
         const snippets: Record<string, string> = {
@@ -249,7 +252,7 @@ export function EditorPane({tab, viewMode, jiraBase, theme, active, toolbarVisib
     };
     onReady(tab.id, adapter);
     return () => onReady(tab.id, null);
-  }, [editor, onReady, tab.id]);
+  }, [editor, onReady, tab.id, reveal]);
 
   const interceptTablePaste = (event: ReactClipboardEvent<HTMLDivElement>) => {
     const html = event.clipboardData.getData('text/html');
@@ -260,11 +263,19 @@ export function EditorPane({tab, viewMode, jiraBase, theme, active, toolbarVisib
   };
 
   return (
-    <div ref={rootRef} className="editor-pane" hidden={!active} aria-hidden={!active} onPasteCapture={interceptTablePaste}>
+    <div ref={rootRef} className="editor-pane" hidden={!active} aria-hidden={!active} onPasteCapture={interceptTablePaste}
+      onClickCapture={(event) => {
+        const link = (event.target as Element).closest<HTMLAnchorElement>('a[href^="#"]');
+        if (!link) return;
+        event.preventDefault();
+        event.stopPropagation();
+        reveal({headingId: link.getAttribute('href')!.slice(1)});
+      }}>
       <MarkdownEditorView
         editor={editor}
         autofocus={active}
         stickyToolbar
+        toolbarsPreset={fortisToolbar}
         settingsVisible={[] /* Retain native search anchors without adding Gravity's mode menu. */}
         className="fortis-gravity-editor"
       />

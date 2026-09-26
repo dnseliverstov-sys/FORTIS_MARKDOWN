@@ -454,6 +454,16 @@ function createWindow() {
   win.webContents.session.setPermissionRequestHandler((wc, permission, cb) => cb(allowed.has(permission)));
   win.webContents.session.setPermissionCheckHandler((wc, permission) => allowed.has(permission));
 
+  // Native editing commands preserve the editor selection and rich clipboard data.
+  win.webContents.on('context-menu', (_event, params) => {
+    if (!params.isEditable && !params.selectionText) return;
+    Menu.buildFromTemplate([
+      {label: 'Скопировать', role: 'copy', enabled: params.editFlags.canCopy},
+      {label: 'Вырезать', role: 'cut', enabled: params.isEditable && params.editFlags.canCut},
+      {label: 'Вставить', role: 'paste', enabled: params.isEditable && params.editFlags.canPaste},
+    ]).popup({window: win, frame: params.frame});
+  });
+
   // Внешние ссылки открываем в браузере, а не новым окном Electron.
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https?:/i.test(url)) shell.openExternal(url);
